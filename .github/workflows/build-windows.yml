@@ -75,7 +75,8 @@ jobs:
             & $iscc "installer/HanChi.iss"
             Write-Host "ISCC exit code: $LASTEXITCODE"
           } else {
-            Write-Host "Inno Setup not found, skip installer"
+            Write-Host "Inno Setup not found at $iscc - skip installer"
+            Get-ChildItem "C:\Program Files (x86)" -Filter "*Inno*" -ErrorAction SilentlyContinue
           }
 
       - name: Upload VST3 artifact
@@ -88,5 +89,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HanChi-Setup
-          path: Output/HanChi-Setup.exe
+          path: |
+            Output/HanChi-Setup.exe
+            HanChi-Setup.exe
+            installer/HanChi-Setup.exe
           if-no-files-found: ignore
