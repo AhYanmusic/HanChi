@@ -23,12 +23,15 @@ private:
     HanChiAudioProcessor& processor;
 
     // 频段参数
-    juce::Slider lowFreqSlider, lowThrSlider, highFreqSlider, highThrSlider,
-                 strengthSlider, lookaheadSlider;
-    juce::Label  lowFreqLabel, lowThrLabel, highFreqLabel, highThrLabel,
-                 strengthLabel, lookaheadLabel;
+    juce::Slider lowFreqSlider, lowThrSlider, lowRatioSlider, lowStrSlider,
+                 highFreqSlider, highThrSlider, highRatioSlider, highStrSlider,
+                 lookaheadSlider;
+    juce::Label  lowFreqLabel, lowThrLabel, lowRatioLabel, lowStrLabel,
+                 highFreqLabel, highThrLabel, highRatioLabel, highStrLabel,
+                 lookaheadLabel;
 
     juce::ToggleButton lowEnableButton { "Low Band" }, highEnableButton { "High Band" };
+    juce::ToggleButton lowSoloButton { "Solo" },     highSoloButton { "Solo" };
 
     // 模式 / 精度 / 超采样
     juce::ComboBox modeBox, precisionBox, oversamplingBox;
@@ -43,10 +46,11 @@ private:
     using ComboAttach   = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAttach  = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    std::unique_ptr<SliderAttach> lowFreqAttach, lowThrAttach, highFreqAttach,
-                                  highThrAttach, strengthAttach, lookaheadAttach;
+    std::unique_ptr<SliderAttach> lowFreqAttach, lowThrAttach, lowRatioAttach, lowStrAttach,
+                                  highFreqAttach, highThrAttach, highRatioAttach, highStrAttach,
+                                  lookaheadAttach;
     std::unique_ptr<ComboAttach>  modeAttach, precisionAttach, oversamplingAttach;
-    std::unique_ptr<ButtonAttach> lowEnableAttach, highEnableAttach;
+    std::unique_ptr<ButtonAttach> lowEnableAttach, highEnableAttach, lowSoloAttach, highSoloAttach;
 
     float peakLowDb  = 0.0f;   // 峰值保持（负值，dB）
     float peakHighDb = 0.0f;
