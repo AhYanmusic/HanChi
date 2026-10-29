@@ -2,8 +2,10 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <map>
+#include <type_traits>
 #include <vector>
 
 //==============================================================================
@@ -63,6 +65,7 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
+    template <typename T> struct Chain;   // 前置声明，定义见下方
     //======================================================================
     void parameterChanged (const juce::String& id, float newValue) override;
     void rebuildOversamplersIfNeeded();
@@ -70,18 +73,12 @@ private:
     void updateLatency (int lookSamples);
     void applyParamValues (const std::map<juce::String, float>& values);
 
-    // 按内部精度取对应滤波器组 / 延迟线 / 超采样器（特化在 .cpp 中）
-    template <typename T> auto& lowLP_X();
-    template <typename T> auto& midHP_X();
-    template <typename T> auto& midLP_X();
-    template <typename T> auto& highHP_X();
-    template <typename T> auto& dLowX();
-    template <typename T> auto& dMidX();
-    template <typename T> auto& dHighX();
-    template <typename T> auto& oversX();
-
     template <typename T>
     void processInternal (juce::AudioBuffer<T>& buffer);
+
+    /** 在指定精度的信号链上完成实际 DSP */
+    template <typename T>
+    void processChain (Chain<T>& chain, juce::AudioBuffer<T>& buffer);
 
     //======================================================================
     /** 两极级联 Butterworth（Q=0.7071）= Linkwitz-Riley 4 阶 */
@@ -166,27 +163,38 @@ private:
     };
 
     //======================================================================
+    /** 一档精度（float 或 double）下的完整信号链 */
+    template <typename T>
+    struct Chain
+    {
+        Biquad<T>    lowLP[2], midHP[2], midLP[2], highHP[2];
+        DelayLine<T> dLow[2], dMid[2], dHigh[2];
+        std::unique_ptr<juce::dsp::Oversampling<T>> overs;
+
+        void prepareFilters (double fs, double lowFreq, double highFreq)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                lowLP[ch].set  (fs, lowFreq,  true);
+                midHP[ch].set  (fs, lowFreq,  false);
+                midLP[ch].set  (fs, highFreq, true);
+                highHP[ch].set (fs, highFreq, false);
+            }
+        }
+    };
+
     std::atomic<int>  oversamplerFactor { 1 };
     std::atomic<bool> oversamplerDirty  { true };
     std::atomic<bool> filtersDirty      { true };
 
-    std::unique_ptr<juce::dsp::Oversampling<float>>  oversF;
-    std::unique_ptr<juce::dsp::Oversampling<double>> oversD;
-
     double currentSampleRate = 48000.0;
     int    currentBlockSize  = 512;
-
-    // float 路径滤波器组
-    Biquad<float>  lowLP_F[2], midHP_F[2], midLP_F[2], highHP_F[2];
-    // double 路径滤波器组
-    Biquad<double> lowLP_D[2], midHP_D[2], midLP_D[2], highHP_D[2];
 
     // 检测器（double 运算，两条路径共用，只有一条路径在同一时间运行）
     Detector<double> detMid[2], detHigh[2], detWide[2];
 
-    // 前瞻延迟线：低 / 中 / 高三段独立延迟（保证分频求和相位一致）
-    DelayLine<float>  dLowF[2], dMidF[2], dHighF[2];
-    DelayLine<double> dLowD[2], dMidD[2], dHighD[2];
+    Chain<float>  chainF;
+    Chain<double> chainD;
 
     juce::AudioBuffer<float>  scratchF;
     juce::AudioBuffer<double> scratchD;

@@ -100,38 +100,34 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 
 void HanChiAudioProcessor::rebuildOversamplersIfNeeded()
 {
-    if (! oversamplerDirty.exchange (false) && oversF != nullptr && oversD != nullptr)
+    if (! oversamplerDirty.exchange (false)
+        && chainF.overs != nullptr && chainD.overs != nullptr)
         return;
 
     const int comboIdx = (int) apvts.getRawParameterValue (pOs)->load(); // 0..3 -> 1x,2x,4x,8x
     const size_t factor = (size_t) 1 << comboIdx;
 
-    oversF = std::make_unique<juce::dsp::Oversampling<float>> (2, factor,
-              juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-    oversD = std::make_unique<juce::dsp::Oversampling<double>> (2, factor,
-              juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, true);
+    chainF.overs = std::make_unique<juce::dsp::Oversampling<float>> (2, factor,
+                   juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+    chainD.overs = std::make_unique<juce::dsp::Oversampling<double>> (2, factor,
+                   juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, true);
 
     // JUCE 的 Oversampling 走 initProcessing(maxSamplesBeforeOversampling)
-    oversF->initProcessing ((size_t) currentBlockSize);
-    oversD->initProcessing ((size_t) currentBlockSize);
-    oversF->reset();
-    oversD->reset();
+    chainF.overs->initProcessing ((size_t) currentBlockSize);
+    chainD.overs->initProcessing ((size_t) currentBlockSize);
+    chainF.overs->reset();
+    chainD.overs->reset();
     oversamplerFactor = (int) factor;
 }
 
 void HanChiAudioProcessor::rebuildBiquads()
 {
     const double fs = currentSampleRate;
-    const float lf = apvts.getRawParameterValue (pLowFreq)->load();
-    const float hf = apvts.getRawParameterValue (pHighFreq)->load();
+    const double lf = apvts.getRawParameterValue (pLowFreq)->load();
+    const double hf = apvts.getRawParameterValue (pHighFreq)->load();
 
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        lowLP_F[ch].set  (fs, lf, true);   midHP_F[ch].set (fs, lf, false);
-        midLP_F[ch].set  (fs, hf, true);   highHP_F[ch].set (fs, hf, false);
-        lowLP_D[ch].set  (fs, lf, true);   midHP_D[ch].set (fs, lf, false);
-        midLP_D[ch].set  (fs, hf, true);   highHP_D[ch].set (fs, hf, false);
-    }
+    chainF.prepareFilters (fs, lf, hf);
+    chainD.prepareFilters (fs, lf, hf);
     filtersDirty = false;
 }
 
@@ -144,8 +140,8 @@ void HanChiAudioProcessor::parameterChanged (const juce::String& id, float)
 void HanChiAudioProcessor::updateLatency (int lookSamples)
 {
     double osLatency = 0.0;
-    if (oversamplerFactor > 1)
-        osLatency = oversF != nullptr ? oversF->getLatencyInSamples() : 0.0;
+    if (oversamplerFactor > 1 && chainF.overs != nullptr)
+        osLatency = chainF.overs->getLatencyInSamples();
     setLatencySamples (juce::roundToInt ((double) lookSamples + osLatency));
 }
 
@@ -202,6 +198,15 @@ void HanChiAudioProcessor::processBlock (juce::AudioBuffer<double>& buffer, juce
 template <typename T>
 void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
 {
+    if constexpr (std::is_same_v<T, float>)
+        processChain (chainF, buffer);
+    else
+        processChain (chainD, buffer);
+}
+
+template <typename T>
+void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buffer)
+{
     const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
 
     const bool splitMode  = apvts.getRawParameterValue (pMode)->load() > 0.5f;
@@ -213,19 +218,20 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
     const int lookSamples = (int) std::round (apvts.getRawParameterValue (pLookahead)->load()
                                               * 0.001 * currentSampleRate);
 
-    // 前瞻延迟线尺寸
-    auto& dLow  = dLowX<T>();
-    auto& dMid  = dMidX<T>();
-    auto& dHigh = dHighX<T>();
-    for (int ch = 0; ch < 2; ++ch) { dLow[ch].setSize (lookSamples); dMid[ch].setSize (lookSamples); dHigh[ch].setSize (lookSamples); }
+    // 前瞻延迟线尺寸（低 / 中 / 高三段一致，保证求和相位对齐）
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        c.dLow[ch].setSize (lookSamples);
+        c.dMid[ch].setSize (lookSamples);
+        c.dHigh[ch].setSize (lookSamples);
+    }
 
     // 超采样：升频
     T* chPtr[2] { nullptr, nullptr };
     int chunk = 0;
-    if (oversamplerFactor > 1)
+    if (oversamplerFactor > 1 && c.overs != nullptr)
     {
-        auto& os = oversX<T>();
-        auto up = os.processSamplesUp (juce::dsp::AudioBlock<T> (buffer));
+        auto up = c.overs->processSamplesUp (juce::dsp::AudioBlock<T> (buffer));
         chunk = (int) up.getNumSamples();
         for (int ch = 0; ch < numChannels; ++ch)
             chPtr[ch] = up.getChannelPointer (ch);
@@ -237,12 +243,6 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
             chPtr[ch] = buffer.getWritePointer (ch);
     }
 
-    // 滤波器组（按精度选择）
-    auto& lowLP  = lowLP_X<T>();
-    auto& midHP  = midHP_X<T>();
-    auto& midLP  = midLP_X<T>();
-    auto& highHP = highHP_X<T>();
-
     float grMidMin = 0.0f, grHighMin = 0.0f;
 
     for (int i = 0; i < chunk; ++i)
@@ -252,17 +252,17 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
             const T in = chPtr[ch][i];
 
             // ---- 频段拆分（滤波器作用于未延迟信号，供检测器使用） ----
-            const T low  = lowLP[ch].processSample (in);
-            const T midH = midHP[ch].processSample (in);
-            const T mid  = midLP[ch].processSample (midH);
-            const T high = highHP[ch].processSample (in);
+            const T low  = c.lowLP[ch].processSample (in);
+            const T midH = c.midHP[ch].processSample (in);
+            const T mid  = c.midLP[ch].processSample (midH);
+            const T high = c.highHP[ch].processSample (in);
 
             T out;
             if (splitMode)
             {
-                const T dLow  = dLow[ch].pushAndPop (low);
-                const T dMid  = dMid[ch].pushAndPop (mid);
-                const T dHigh = dHigh[ch].pushAndPop (high);
+                const T dLow  = c.dLow[ch].pushAndPop (low);
+                const T dMid  = c.dMid[ch].pushAndPop (mid);
+                const T dHigh = c.dHigh[ch].pushAndPop (high);
 
                 T gMid = T (1), gHigh = T (1);
                 if (lowEn)
@@ -279,7 +279,7 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
             }
             else // 宽带模式：检测取中/高段较大包络，整路统一衰减（模拟老式宽带 DeEsser）
             {
-                const T d = dMid[ch].pushAndPop (in);
+                const T d = c.dMid[ch].pushAndPop (in);
                 const double det = (double) juce::jmax (std::abs (mid), std::abs (high));
                 const T g = (T) detWide[ch].processSample (det, lowThr, strength);
                 grMidMin = juce::jmin (grMidMin, juce::Decibels::gainToDecibels ((float) g));
@@ -290,34 +290,16 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
     }
 
     // 超采样：降频
-    if (oversamplerFactor > 1)
+    if (oversamplerFactor > 1 && c.overs != nullptr)
     {
         auto outBlock = juce::dsp::AudioBlock<T> (buffer);
-        oversX<T>().processSamplesDown (outBlock);
+        c.overs->processSamplesDown (outBlock);
     }
 
     grLowDb  = grMidMin;
     grHighDb = grHighMin;
     updateLatency (lookSamples);
 }
-
-// 按精度取滤波器组 / 延迟线 / 超采样器的辅助函数
-template <> inline auto& HanChiAudioProcessor::lowLP_X<float>()  { return lowLP_F; }
-template <> inline auto& HanChiAudioProcessor::lowLP_X<double>() { return lowLP_D; }
-template <> inline auto& HanChiAudioProcessor::midHP_X<float>()  { return midHP_F; }
-template <> inline auto& HanChiAudioProcessor::midHP_X<double>() { return midHP_D; }
-template <> inline auto& HanChiAudioProcessor::midLP_X<float>()  { return midLP_F; }
-template <> inline auto& HanChiAudioProcessor::midLP_X<double>() { return midLP_D; }
-template <> inline auto& HanChiAudioProcessor::highHP_X<float>()  { return highHP_F; }
-template <> inline auto& HanChiAudioProcessor::highHP_X<double>() { return highHP_D; }
-template <> inline auto& HanChiAudioProcessor::dLowX<float>()  { return dLowF; }
-template <> inline auto& HanChiAudioProcessor::dLowX<double>() { return dLowD; }
-template <> inline auto& HanChiAudioProcessor::dMidX<float>()  { return dMidF; }
-template <> inline auto& HanChiAudioProcessor::dMidX<double>() { return dMidD; }
-template <> inline auto& HanChiAudioProcessor::dHighX<float>()  { return dHighF; }
-template <> inline auto& HanChiAudioProcessor::dHighX<double>() { return dHighD; }
-template <> inline auto& HanChiAudioProcessor::oversX<float>()  { return *oversF; }
-template <> inline auto& HanChiAudioProcessor::oversX<double>() { return *oversD; }
 
 template void HanChiAudioProcessor::processInternal<float>  (juce::AudioBuffer<float>&);
 template void HanChiAudioProcessor::processInternal<double> (juce::AudioBuffer<double>&);
