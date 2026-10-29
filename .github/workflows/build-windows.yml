@@ -17,27 +17,58 @@ jobs:
         with:
           arch: x64
 
+      - name: Toolchain info
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+          cl 2>&1 | Select-Object -First 2
+
       - name: Configure
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 |
+            Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) {
+            $tail = (Get-Content configure.log -Tail 40) -join "%0A"
+            Write-Host "::error::CONFIGURE FAILED: $tail"
+            exit 1
+          }
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: pwsh
+        run: |
+          cmake --build build --parallel 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            $tail = (Get-Content build.log -Tail 40) -join "%0A"
+            Write-Host "::error::BUILD FAILED: $tail"
+            exit 1
+          }
 
       - name: Stage VST3
         shell: pwsh
         run: |
+          $bundle = Get-ChildItem -Path build -Recurse -Directory -Filter "HanChi.vst3" |
+                    Select-Object -First 1
+          if ($null -eq $bundle) {
+            Write-Host "::error::VST3 BUNDLE NOT FOUND under build/"
+            Get-ChildItem -Path build -Recurse -Directory | Select-Object -ExpandProperty FullName
+            exit 1
+          }
+          Write-Host "Bundle: $($bundle.FullName)"
           New-Item -ItemType Directory -Force -Path stage | Out-Null
-          Copy-Item -Recurse -Force "build/HanChi_artefacts/Release/VST3/HanChi.vst3" "stage/HanChi.vst3"
+          Copy-Item -Recurse -Force $bundle.FullName "stage/HanChi.vst3"
           Compress-Archive -Path "stage/HanChi.vst3" -DestinationPath "HanChi-Win64.zip" -Force
 
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path installer/payload | Out-Null
-          Copy-Item -Recurse -Force "build/HanChi_artefacts/Release/VST3/HanChi.vst3" "installer/payload/HanChi.vst3"
+          Copy-Item -Recurse -Force "stage/HanChi.vst3" "installer/payload/HanChi.vst3"
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (Test-Path $iscc) {
             & $iscc "installer/HanChi.iss"
+            Write-Host "ISCC exit code: $LASTEXITCODE"
           } else {
             Write-Host "Inno Setup not found, skip installer"
           }
