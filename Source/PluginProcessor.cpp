@@ -290,7 +290,10 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
 
     // 超采样：降频
     if (oversamplerFactor > 1)
-        oversX<T>().processSamplesDown (juce::dsp::AudioBlock<T> (buffer));
+    {
+        auto outBlock = juce::dsp::AudioBlock<T> (buffer);
+        oversX<T>().processSamplesDown (outBlock);
+    }
 
     grLowDb  = grMidMin;
     grHighDb = grHighMin;

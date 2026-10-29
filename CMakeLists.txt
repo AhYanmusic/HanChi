@@ -31,6 +31,8 @@ juce_add_plugin(HanChi
     VST3_CATEGORIES            Fx DSP
 )
 
+juce_generate_juce_header(HanChi)
+
 target_sources(HanChi PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
