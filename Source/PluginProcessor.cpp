@@ -23,29 +23,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout HanChiAudioProcessor::create
     using PB = juce::AudioParameterBool;
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    layout.add (std::make_unique<PC> (juce::ParameterID (pMode, 1), "处理模式",
-                 juce::StringArray { "宽带 Broadband", "分频段 Split" }, 1));
+    layout.add (std::make_unique<PC> (juce::ParameterID (pMode, 1), "Processing Mode",
+                 juce::StringArray { "Broadband", "Split" }, 1));
 
-    layout.add (std::make_unique<PB> (juce::ParameterID (pLowEn, 1), "低区启用", true));
-    layout.add (std::make_unique<P> (juce::ParameterID (pLowFreq, 1), "低区分频频率",
+    layout.add (std::make_unique<PB> (juce::ParameterID (pLowEn, 1), "Low Band", true));
+    layout.add (std::make_unique<P> (juce::ParameterID (pLowFreq, 1), "Low X-Over Freq",
                  juce::NormalisableRange<float> (4000.0f, 9000.0f, 1.0f, 0.5f), 6000.0f, "Hz"));
-    layout.add (std::make_unique<P> (juce::ParameterID (pLowThr, 1), "低区阈值",
+    layout.add (std::make_unique<P> (juce::ParameterID (pLowThr, 1), "Low Threshold",
                  juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -30.0f, "dB"));
 
-    layout.add (std::make_unique<PB> (juce::ParameterID (pHighEn, 1), "高区启用", true));
-    layout.add (std::make_unique<P> (juce::ParameterID (pHighFreq, 1), "高区分频频率",
+    layout.add (std::make_unique<PB> (juce::ParameterID (pHighEn, 1), "High Band", true));
+    layout.add (std::make_unique<P> (juce::ParameterID (pHighFreq, 1), "High X-Over Freq",
                  juce::NormalisableRange<float> (7000.0f, 13000.0f, 1.0f, 0.5f), 9500.0f, "Hz"));
-    layout.add (std::make_unique<P> (juce::ParameterID (pHighThr, 1), "高区阈值",
+    layout.add (std::make_unique<P> (juce::ParameterID (pHighThr, 1), "High Threshold",
                  juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -32.0f, "dB"));
 
-    layout.add (std::make_unique<P> (juce::ParameterID (pStrength, 1), "强度",
+    layout.add (std::make_unique<P> (juce::ParameterID (pStrength, 1), "Strength",
                  juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 60.0f, "%"));
-    layout.add (std::make_unique<P> (juce::ParameterID (pLookahead, 1), "前瞻 Lookahead",
+    layout.add (std::make_unique<P> (juce::ParameterID (pLookahead, 1), "Lookahead",
                  juce::NormalisableRange<float> (0.0f, 10.0f, 0.1f), 3.0f, "ms"));
 
-    layout.add (std::make_unique<PC> (juce::ParameterID (pPrecision, 1), "内部精度",
-                 juce::StringArray { "32-bit 浮点", "64-bit 浮点" }, 0));
-    layout.add (std::make_unique<PC> (juce::ParameterID (pOs, 1), "超采样",
+    layout.add (std::make_unique<PC> (juce::ParameterID (pPrecision, 1), "Precision",
+                 juce::StringArray { "32-bit Float", "64-bit Float" }, 0));
+    layout.add (std::make_unique<PC> (juce::ParameterID (pOs, 1), "Oversampling",
                  juce::StringArray { "1x", "2x", "4x", "8x" }, 0));
 
     return layout;
@@ -331,8 +331,8 @@ juce::File HanChiAudioProcessor::getUserTemplateDir()
 
 juce::StringArray HanChiAudioProcessor::getBuiltinTemplateNames()
 {
-    return { "男声标准", "女声标准", "齿音偏重", "女声清亮",
-             "说唱强压", "民谣古风轻手", "配音广播级", "宽带模拟老 DeEsser" };
+    return { "Male Standard", "Female Standard", "Heavy Sibilance", "Bright Female",
+             "Rap / Hard", "Folk / Guzheng Light", "Voice-over Broadcast", "Broadband Vintage De-Esser" };
 }
 
 juce::StringArray HanChiAudioProcessor::getUserTemplateNames() const
@@ -353,28 +353,28 @@ void HanChiAudioProcessor::applyParamValues (const std::map<juce::String, float>
 
 void HanChiAudioProcessor::applyBuiltinTemplate (const juce::String& name)
 {
-    if (name == "男声标准")
+    if (name == "Male Standard")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},
                             {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pStrength,55},{pLookahead,3} });
-    else if (name == "女声标准")
+    else if (name == "Female Standard")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-26},
                             {pHighEn,1},{pHighFreq,10000},{pHighThr,-28},{pStrength,60},{pLookahead,3} });
-    else if (name == "齿音偏重")
+    else if (name == "Heavy Sibilance")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5500},{pLowThr,-22},
                             {pHighEn,1},{pHighFreq,9000},{pHighThr,-24},{pStrength,80},{pLookahead,4} });
-    else if (name == "女声清亮")
+    else if (name == "Bright Female")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,7000},{pLowThr,-28},
                             {pHighEn,1},{pHighFreq,11000},{pHighThr,-26},{pStrength,50},{pLookahead,3} });
-    else if (name == "说唱强压")
+    else if (name == "Rap / Hard")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5000},{pLowThr,-20},
                             {pHighEn,1},{pHighFreq,8500},{pHighThr,-22},{pStrength,90},{pLookahead,5} });
-    else if (name == "民谣古风轻手")
+    else if (name == "Folk / Guzheng Light")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-34},
                             {pHighEn,1},{pHighFreq,10000},{pHighThr,-36},{pStrength,35},{pLookahead,2} });
-    else if (name == "配音广播级")
+    else if (name == "Voice-over Broadcast")
         applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-24},
                             {pHighEn,1},{pHighFreq,9500},{pHighThr,-25},{pStrength,75},{pLookahead,4} });
-    else if (name == "宽带模拟老 DeEsser")
+    else if (name == "Broadband Vintage De-Esser")
         applyParamValues ({ {pMode,0},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},
                             {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pStrength,60},{pLookahead,2} });
 }

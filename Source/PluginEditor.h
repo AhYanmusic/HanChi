@@ -27,7 +27,7 @@ private:
     juce::Label  lowFreqLabel, lowThrLabel, highFreqLabel, highThrLabel,
                  strengthLabel, lookaheadLabel;
 
-    juce::ToggleButton lowEnableButton { "低区" }, highEnableButton { "高区" };
+    juce::ToggleButton lowEnableButton { "Low Band" }, highEnableButton { "High Band" };
 
     // 模式 / 精度 / 超采样
     juce::ComboBox modeBox, precisionBox, oversamplingBox;
@@ -35,8 +35,8 @@ private:
 
     // 模板
     juce::ComboBox templateBox;
-    juce::TextButton saveTemplateButton { "存为模板" },
-                     deleteTemplateButton { "删除模板" };
+    juce::TextButton saveTemplateButton { "Save Preset" },
+                     deleteTemplateButton { "Delete" };
 
     using SliderAttach  = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttach   = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

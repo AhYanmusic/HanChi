@@ -17,12 +17,12 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
         addAndMakeVisible (l);
     };
 
-    initSlider (lowFreqSlider,   lowFreqLabel,   "低区分频");
-    initSlider (lowThrSlider,    lowThrLabel,    "低区阈值");
-    initSlider (highFreqSlider,  highFreqLabel,  "高区分频");
-    initSlider (highThrSlider,   highThrLabel,   "高区阈值");
-    initSlider (strengthSlider,  strengthLabel,  "强度");
-    initSlider (lookaheadSlider, lookaheadLabel, "前瞻");
+    initSlider (lowFreqSlider,   lowFreqLabel,   "Low X-Over");
+    initSlider (lowThrSlider,    lowThrLabel,    "Low Thresh");
+    initSlider (highFreqSlider,  highFreqLabel,  "High X-Over");
+    initSlider (highThrSlider,   highThrLabel,   "High Thresh");
+    initSlider (strengthSlider,  strengthLabel,  "Strength");
+    initSlider (lookaheadSlider, lookaheadLabel, "Lookahead");
 
     lowFreqSlider.setColour  (juce::Slider::rotarySliderFillColourId, juce::Colour (0xff4f9ddb));
     highFreqSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffd97b4f));
@@ -47,21 +47,21 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
         addAndMakeVisible (l);
     };
 
-    modeBox.addItem ("宽带 Broadband", 1);
-    modeBox.addItem ("分频段 Split", 2);
-    initCombo (modeBox, modeLabel, "模式");
+    modeBox.addItem ("Broadband", 1);
+    modeBox.addItem ("Split", 2);
+    initCombo (modeBox, modeLabel, "Mode");
     modeAttach = std::make_unique<ComboAttach> (processor.apvts, "mode", modeBox);
 
     precisionBox.addItem ("32-bit", 1);
     precisionBox.addItem ("64-bit", 2);
-    initCombo (precisionBox, precisionLabel, "精度");
+    initCombo (precisionBox, precisionLabel, "Precision");
     precisionAttach = std::make_unique<ComboAttach> (processor.apvts, "precision", precisionBox);
 
     oversamplingBox.addItem ("1x", 1);
     oversamplingBox.addItem ("2x", 2);
     oversamplingBox.addItem ("4x", 3);
     oversamplingBox.addItem ("8x", 4);
-    initCombo (oversamplingBox, oversamplingLabel, "超采样");
+    initCombo (oversamplingBox, oversamplingLabel, "Oversampling");
     oversamplingAttach = std::make_unique<ComboAttach> (processor.apvts, "oversampling", oversamplingBox);
 
     // 模板区
@@ -99,7 +99,7 @@ void HanChiAudioProcessorEditor::timerCallback()
 void HanChiAudioProcessorEditor::refreshTemplateList (const juce::String& selectName)
 {
     templateBox.clear (juce::dontSendNotification);
-    templateBox.addItem ("— 选择模板 —", 1);
+    templateBox.addItem ("— Select Preset —", 1);
     int id = 2;
     for (const auto& n : HanChiAudioProcessor::getBuiltinTemplateNames())
         templateBox.addItem (n, id++);
@@ -123,7 +123,7 @@ void HanChiAudioProcessorEditor::refreshTemplateList (const juce::String& select
 void HanChiAudioProcessorEditor::applySelectedTemplate()
 {
     const auto name = templateBox.getText();
-    if (name.isEmpty() || name == "— 选择模板 —") return;
+    if (name.isEmpty() || name == "— Select Preset —") return;
 
     if (HanChiAudioProcessor::getBuiltinTemplateNames().contains (name))
         processor.applyBuiltinTemplate (name);
@@ -133,11 +133,11 @@ void HanChiAudioProcessorEditor::applySelectedTemplate()
 
 void HanChiAudioProcessorEditor::saveTemplateDialog()
 {
-    auto* aw = new juce::AlertWindow ("存为模板", "请输入模板名称：",
+    auto* aw = new juce::AlertWindow ("Save Preset", "Enter a preset name:",
                                       juce::MessageBoxIconType::NoIcon);
-    aw->addTextEditor ("name", "我的模板");
-    aw->addButton ("保存", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("取消", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->addTextEditor ("name", "My Preset");
+    aw->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true, juce::ModalCallbackFunction::create
         ([this, aw] (int result)
@@ -158,12 +158,12 @@ void HanChiAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (0xffe8e2d6));
     g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
-    g.drawText ("HanChi 汉齿 · 中文齿音处理器", getLocalBounds().removeFromTop (44),
+    g.drawText ("HanChi  ·  Chinese Vocal De-Esser", getLocalBounds().removeFromTop (44),
                 juce::Justification::centred);
 
     g.setFont (juce::FontOptions (13.0f));
     g.setColour (juce::Colour (0xff8a919c));
-    g.drawText ("双频段动态去齿音 ｜ 低区 4-9kHz（嘶/嘘）  高区 7-13kHz（咝/刺感）",
+    g.drawText ("Dual-Band Dynamic De-Esser   |   Low 4-9 kHz (s / sh / c)   -   High 7-13 kHz (hiss / sizzle)",
                 getLocalBounds().removeFromTop (64).removeFromBottom (18),
                 juce::Justification::centred);
 
@@ -192,8 +192,8 @@ void HanChiAudioProcessorEditor::paint (juce::Graphics& g)
         zone.removeFromLeft (10);
     };
 
-    drawMeter (meterArea, "低区 GR", grL, juce::Colour (0xff4f9ddb));
-    drawMeter (meterArea, "高区 GR", grH, juce::Colour (0xffd97b4f));
+    drawMeter (meterArea, "Low GR", grL, juce::Colour (0xff4f9ddb));
+    drawMeter (meterArea, "High GR", grH, juce::Colour (0xffd97b4f));
 }
 
 void HanChiAudioProcessorEditor::resized()

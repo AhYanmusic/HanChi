@@ -45,6 +45,12 @@ target_compile_definitions(HanChi PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
+# 源文件为 UTF-8 编码；强制 MSVC 以 UTF-8 读取源文件、并以 UTF-8 作为执行字符集，
+# 否则中文字符串会被按系统代码页(GBK)编译，运行时显示为乱码。
+if (MSVC)
+    target_compile_options(HanChi PRIVATE /utf-8)
+endif()
+
 target_link_libraries(HanChi
     PRIVATE
         juce::juce_audio_utils
