@@ -111,10 +111,11 @@ void HanChiAudioProcessor::rebuildOversamplersIfNeeded()
     oversD = std::make_unique<juce::dsp::Oversampling<double>> (2, factor,
               juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, true);
 
-    const juce::dsp::ProcessSpec spec { currentSampleRate,
-                                        (juce::uint32) (currentBlockSize * (int) factor), 2 };
-    oversF->prepare (spec);
-    oversD->prepare (spec);
+    // JUCE 的 Oversampling 走 initProcessing(maxSamplesBeforeOversampling)
+    oversF->initProcessing ((size_t) currentBlockSize);
+    oversD->initProcessing ((size_t) currentBlockSize);
+    oversF->reset();
+    oversD->reset();
     oversamplerFactor = (int) factor;
 }
 
@@ -340,7 +341,7 @@ void HanChiAudioProcessor::setStateInformation (const void* data, int sizeInByte
 // 模板系统
 juce::File HanChiAudioProcessor::getUserTemplateDir()
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDir)
+    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                    .getChildFile ("HanChi").getChildFile ("Templates");
     dir.createDirectoryIfMissing();
     return dir;
@@ -403,11 +404,11 @@ bool HanChiAudioProcessor::saveUserTemplate (const juce::String& name)
         return false;
 
     juce::XmlElement xml ("HanChiTemplate");
-    for (auto* p : apvts.getParameters())
+    for (auto* p : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
-            xml->setAttribute (ranged->paramID, ranged->convertFrom0to1 (ranged->getValue()));
+            xml.setAttribute (ranged->paramID, ranged->convertFrom0to1 (ranged->getValue()));
 
-    return xml->writeTo (getUserTemplateDir().getChildFile (safe + ".xml"));
+    return xml.writeTo (getUserTemplateDir().getChildFile (safe + ".xml"));
 }
 
 bool HanChiAudioProcessor::applyUserTemplate (const juce::String& name)
@@ -421,7 +422,7 @@ bool HanChiAudioProcessor::applyUserTemplate (const juce::String& name)
         return false;
 
     std::map<juce::String, float> values;
-    for (auto* p : apvts.getParameters())
+    for (auto* p : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
             if (xml->hasAttribute (ranged->paramID))
                 values[ranged->paramID] = (float) xml->getDoubleAttribute (ranged->paramID);
