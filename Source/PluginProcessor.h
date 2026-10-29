@@ -104,7 +104,7 @@ private:
         }
     };
 
-    /** 峰值包络检测 + 3:1 软压缩 + 攻/放平滑 */
+    /** 峰值包络检测 + 8:1 硬压缩（满强度时最大削减 20 dB）+ 攻/放平滑 */
     template <typename T>
     struct Detector
     {
@@ -126,7 +126,11 @@ private:
             T target = T (1);
             if (over > T (0))
             {
-                const T grDb = -over * (T (1) - T (1) / T (3)) * strength01; // 3:1
+                // 去齿音需要硬比例：8:1（削减 = 超出量 × 0.875）
+                const T grRaw = over * (T (1) - T (1) / T (8));
+                // 满强度(100%)时最大削减 20 dB；强度旋钮线性缩放该上限
+                const T maxGr = T (20) * strength01;
+                const T grDb  = -juce::jmin (grRaw, maxGr);
                 target = juce::Decibels::decibelsToGain (grDb, T (-120));
             }
             gain = target < gain ? gain + atk * (target - gain)
