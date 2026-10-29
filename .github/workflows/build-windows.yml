@@ -40,8 +40,13 @@ jobs:
         run: |
           cmake --build build --parallel 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) {
-            $tail = (Get-Content build.log -Tail 40) -join "%0A"
-            Write-Host "::error::BUILD FAILED: $tail"
+            $errs = Select-String -Path build.log -Pattern "error C|error LNK|error MSB|fatal error|Error:" |
+                    ForEach-Object { $_.Line.Trim() } | Select-Object -First 20
+            $msg = ($errs -join "%0A")
+            if ([string]::IsNullOrWhiteSpace($msg)) {
+              $msg = (Get-Content build.log -Tail 20) -join "%0A"
+            }
+            Write-Host "::error::BUILD FAILED:%0A$msg"
             exit 1
           }
 
