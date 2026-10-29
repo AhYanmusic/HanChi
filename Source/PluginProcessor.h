@@ -9,12 +9,13 @@
 #include <vector>
 
 //==============================================================================
-/** HanChi 汉齿 · 中文齿音 VST3 插件（v1.1）
+/** HanChi 汉齿 · 中文齿音 VST3 插件（v1.3）
  *
  *  双频段动态去齿音：低区 4-9kHz（嘶/嘘，s x c z）+ 高区 7-13kHz（咝/刺感），
  *  Linkwitz-Riley（两极级联 Butterworth Q=0.7071）4 阶分频；
- *  宽带 / 分频段两种模式；前瞻 Lookahead 0-10ms；强度 0-100%；
- *  内部精度 32/64-bit 浮点可选；1x-8x 多相半带超采样；
+ *  宽带 / 分频段两种模式；前瞻 Lookahead 0-10ms；
+ *  每个频段独立控制：阈值 / 压缩比 / 强度 / 单独 Solo 试听；
+ *  内部精度 32/64-bit 浮点可选；1x-8x 多相半带超采样（按真实通道数构建、并在超采样率下重算分频与检测）；
  *  8 套中文人声模板 + 用户模板（存为 / 载入 / 删除）。
  */
 class HanChiAudioProcessor : public juce::AudioProcessor,
@@ -70,6 +71,7 @@ private:
     void parameterChanged (const juce::String& id, float newValue) override;
     void rebuildOversamplersIfNeeded();
     void rebuildBiquads();
+    void prepareDetectors (double fs);
     void updateLatency (int lookSamples);
     void applyParamValues (const std::map<juce::String, float>& values);
 
@@ -104,21 +106,27 @@ private:
         }
     };
 
-    /** 峰值包络检测 + 8:1 硬压缩（满强度时最大削减 20 dB）+ 攻/放平滑 */
+    /** 峰值包络检测 + 可设比例硬压缩（满强度时最大削减 20 dB）+ 攻/放平滑
+     *  ratio    : 压缩比（如 8 = 8:1），每频段独立
+     *  strength01: 强度 0..1，线性缩放最大削减上限（满强度 = 20 dB）
+     */
     template <typename T>
     struct Detector
     {
         T env = T (0), gain = T (1);
         T atk = T (0), rel = T (0), envRel = T (0);
 
-        void prepare (double fs)
+        // 仅更新时基常数（超采样率变化时不重置包络状态，避免爆音）
+        void setTimeConstants (double fs)
         {
             envRel = (T) std::exp (-1.0 / (fs * 0.030));   // 包络释放 30ms
             atk    = (T) std::exp (-1.0 / (fs * 0.0005));  // 增益攻击 0.5ms
             rel    = (T) std::exp (-1.0 / (fs * 0.080));   // 增益释放 80ms
-            env = T (0); gain = T (1);
         }
-        T processSample (T absIn, T thresholdDb, T strength01)
+        void reset()   { env = T (0); gain = T (1); }
+        void prepare (double fs) { setTimeConstants (fs); reset(); }
+
+        T processSample (T absIn, T thresholdDb, T strength01, T ratio)
         {
             env = absIn > env ? absIn : env * envRel;
             const T envDb  = juce::Decibels::gainToDecibels (env, T (-120));
@@ -126,8 +134,9 @@ private:
             T target = T (1);
             if (over > T (0))
             {
-                // 去齿音需要硬比例：8:1（削减 = 超出量 × 0.875）
-                const T grRaw = over * (T (1) - T (1) / T (8));
+                const T ratioF = ratio > T (1) ? ratio : T (1.0001);
+                // 去齿音需要硬比例：削减 = 超出量 × (1 - 1/ratio)
+                const T grRaw = over * (T (1) - T (1) / ratioF);
                 // 满强度(100%)时最大削减 20 dB；强度旋钮线性缩放该上限
                 const T maxGr = T (20) * strength01;
                 const T grDb  = -juce::jmin (grRaw, maxGr);
@@ -187,12 +196,15 @@ private:
         }
     };
 
-    std::atomic<int>  oversamplerFactor { 1 };
-    std::atomic<bool> oversamplerDirty  { true };
-    std::atomic<bool> filtersDirty      { true };
+    std::atomic<int>  oversamplerFactor  { 1 };
+    std::atomic<bool> oversamplerDirty   { true };
+    std::atomic<bool> filtersDirty       { true };
 
     double currentSampleRate = 48000.0;
     int    currentBlockSize  = 512;
+    int    currentNumChannels = 2;     // 主输入总线实际通道数
+    int    builtChannelCount  = 0;     // 超采样器已构建的通道数
+    int    lastLatencySamples = 0;     // 上次上报的延迟，避免每 block 重复 setLatencySamples
 
     // 检测器（double 运算，两条路径共用，只有一条路径在同一时间运行）
     Detector<double> detMid[2], detHigh[2], detWide[2];
