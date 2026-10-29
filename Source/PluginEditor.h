@@ -1,0 +1,51 @@
+#pragma once
+
+#include "PluginProcessor.h"
+
+//==============================================================================
+class HanChiAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                   private juce::Timer
+{
+public:
+    explicit HanChiAudioProcessorEditor (HanChiAudioProcessor&);
+    ~HanChiAudioProcessorEditor() override;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void refreshTemplateList (const juce::String& selectName = {});
+    void applySelectedTemplate();
+    void saveTemplateDialog();
+
+    HanChiAudioProcessor& processor;
+
+    // 频段参数
+    juce::Slider lowFreqSlider, lowThrSlider, highFreqSlider, highThrSlider,
+                 strengthSlider, lookaheadSlider;
+    juce::Label  lowFreqLabel, lowThrLabel, highFreqLabel, highThrLabel,
+                 strengthLabel, lookaheadLabel;
+
+    juce::ToggleButton lowEnableButton { "低区" }, highEnableButton { "高区" };
+
+    // 模式 / 精度 / 超采样
+    juce::ComboBox modeBox, precisionBox, oversamplingBox;
+    juce::Label    modeLabel, precisionLabel, oversamplingLabel;
+
+    // 模板
+    juce::ComboBox templateBox;
+    juce::TextButton saveTemplateButton { "存为模板" },
+                     deleteTemplateButton { "删除模板" };
+
+    using SliderAttach  = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboAttach   = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using ButtonAttach  = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    std::unique_ptr<SliderAttach> lowFreqAttach, lowThrAttach, highFreqAttach,
+                                  highThrAttach, strengthAttach, lookaheadAttach;
+    std::unique_ptr<ComboAttach>  modeAttach, precisionAttach, oversamplingAttach;
+    std::unique_ptr<ButtonAttach> lowEnableAttach, highEnableAttach;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HanChiAudioProcessorEditor)
+};

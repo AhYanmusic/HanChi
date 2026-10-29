@@ -1,0 +1,56 @@
+name: Build HanChi (Windows x64)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage VST3
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item -Recurse -Force "build/HanChi_artefacts/Release/VST3/HanChi.vst3" "stage/HanChi.vst3"
+          Compress-Archive -Path "stage/HanChi.vst3" -DestinationPath "HanChi-Win64.zip" -Force
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer/payload | Out-Null
+          Copy-Item -Recurse -Force "build/HanChi_artefacts/Release/VST3/HanChi.vst3" "installer/payload/HanChi.vst3"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            & $iscc "installer/HanChi.iss"
+          } else {
+            Write-Host "Inno Setup not found, skip installer"
+          }
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HanChi-Win64
+          path: HanChi-Win64.zip
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HanChi-Setup
+          path: Output/HanChi-Setup.exe
+          if-no-files-found: ignore
