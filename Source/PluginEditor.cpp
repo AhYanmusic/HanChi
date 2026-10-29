@@ -5,7 +5,7 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setResizable (true, true);
-    setResizeLimits (760, 520, 1200, 820);
+    setResizeLimits (760, 660, 1200, 980);
 
     auto initSlider = [this] (juce::Slider& s, juce::Label& l, const juce::String& text)
     {
@@ -82,7 +82,7 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
     };
     refreshTemplateList();
 
-    setSize (860, 560);
+    setSize (860, 730);
     startTimerHz (30);
 }
 
@@ -167,33 +167,122 @@ void HanChiAudioProcessorEditor::paint (juce::Graphics& g)
                 getLocalBounds().removeFromTop (64).removeFromBottom (18),
                 juce::Justification::centred);
 
-    // 增益削减表（右下角）
-    auto meterArea = getLocalBounds().removeFromBottom (30)
-                         .removeFromRight (280).withTrimmedRight (16);
-    const float grL = processor.grLowDb.load();
-    const float grH = processor.grHighDb.load();
+    // 频段图示（布局与 resized() 保持一致）
+    auto area = getLocalBounds().reduced (16);
+    area.removeFromTop (56);    // 标题区
+    area.removeFromTop (30);    // 模板行
+    area.removeFromTop (8);
+    area.removeFromTop (26);    // 选项行
+    area.removeFromTop (12);
+    area.removeFromTop (210);   // 旋钮区
+    area.removeFromTop (8);
+    area.removeFromTop (26);    // 频段启用
+    area.removeFromTop (12);
+    drawBandGraph (g, area);
+}
 
-    g.setColour (juce::Colour (0xff8a919c));
-    g.setFont (juce::FontOptions (12.0f));
+//==============================================================================
+// 频段图示：横轴为对数频率，标出两个分频点、三个频段块，以及各自当前的压缩量
+void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    g.setColour (juce::Colour (0xff15191f));
+    g.fillRoundedRectangle (area.toFloat(), 6.0f);
 
-    auto drawMeter = [&] (juce::Rectangle<int>& zone, const juce::String& title,
-                          float grDb, juce::Colour fill)
+    const double fMin = 200.0, fMax = 20000.0;
+    const double logMin  = std::log (fMin);
+    const double logSpan = std::log (fMax) - logMin;
+
+    auto xFor = [&] (double f)
     {
-        g.drawText (title, zone.removeFromLeft (56).reduced (2), juce::Justification::centredRight);
-        auto bar = zone.removeFromLeft (64).reduced (4);
-        g.setColour (juce::Colour (0xff2a2f38));
-        g.fillRect (bar);
-        const float frac = juce::jlimit (0.0f, 1.0f, -grDb / 24.0f);
-        g.setColour (fill);
-        g.fillRect (bar.removeFromRight ((int) (bar.getWidth() * frac)));
-        g.setColour (juce::Colour (0xff8a919c));
-        g.drawText (juce::String (grDb, 1) + " dB", bar.translated (4, 0).withWidth (56),
-                    juce::Justification::centredLeft);
-        zone.removeFromLeft (10);
+        const double t = juce::jlimit (0.0, 1.0,
+            (std::log (juce::jlimit (fMin, fMax, f)) - logMin) / logSpan);
+        return area.getX() + (int) (t * (double) area.getWidth());
     };
 
-    drawMeter (meterArea, "Low GR", grL, juce::Colour (0xff4f9ddb));
-    drawMeter (meterArea, "High GR", grH, juce::Colour (0xffd97b4f));
+    const double lowF  = lowFreqSlider.getValue();
+    const double highF = highFreqSlider.getValue();
+    const int xLow  = xFor (lowF);
+    const int xHigh = xFor (highF);
+
+    const float grL   = processor.grLowDb.load();
+    const float grH   = processor.grHighDb.load();
+    const float maxDb = 20.0f;   // 满格 = -20 dB
+
+    auto plot = area.reduced (8);
+    plot.removeFromTop (16);      // 图例行
+    plot.removeFromBottom (34);   // 频率刻度行
+
+    const int nameH = 18;
+    const int bodyY = plot.getY() + nameH;
+    const int bodyH = juce::jmax (0, plot.getBottom() - bodyY);
+
+    struct Zone { int x0, x1; juce::Colour c; juce::String name; float gr; };
+    const Zone zones[]
+    {
+        { plot.getX(),  xLow,             juce::Colour (0xff6b7280), "Pass-through (dry)",       0.0f },
+        { xLow,         xHigh,            juce::Colour (0xff4f9ddb), "Low Band  (s / sh / c)",   grL  },
+        { xHigh,        plot.getRight(),  juce::Colour (0xffd97b4f), "High Band  (hiss/sizzle)", grH  }
+    };
+
+    for (const auto& z : zones)
+    {
+        if (z.x1 - z.x0 < 2) continue;
+        auto zr = juce::Rectangle<int> (z.x0, bodyY, z.x1 - z.x0, bodyH);
+
+        g.setColour (z.c.withAlpha (0.14f));
+        g.fillRect (zr);
+
+        // 压缩量：色块自顶部向下填充，满格代表 -20 dB
+        const float frac = juce::jlimit (0.0f, 1.0f, -z.gr / maxDb);
+        if (frac > 0.0f)
+        {
+            g.setColour (z.c.withAlpha (0.50f));
+            g.fillRect (zr.withHeight ((int) ((float) zr.getHeight() * frac)));
+        }
+
+        g.setColour (z.c.withAlpha (0.75f));
+        g.drawRect (zr, 1);
+
+        g.setFont (juce::FontOptions (11.0f));
+        g.setColour (juce::Colour (0xffc8ced8));
+        g.drawText (z.name, z.x0, plot.getY(), z.x1 - z.x0, nameH, juce::Justification::centred);
+
+        if (z.gr < -0.05f)
+        {
+            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+            g.setColour (juce::Colours::white);
+            g.drawText (juce::String (z.gr, 1) + " dB", zr.reduced (4), juce::Justification::centred);
+        }
+    }
+
+    // 分频点竖线 + 频率数值
+    auto drawXover = [&] (int x, double freq, juce::Colour c)
+    {
+        g.setColour (c);
+        g.drawVerticalLine (x, (float) bodyY, (float) plot.getBottom());
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText (juce::String (freq, 0) + " Hz", x - 55, plot.getBottom() + 2, 110, 14,
+                    juce::Justification::centred);
+    };
+    drawXover (xLow,  lowF,  juce::Colour (0xff4f9ddb));
+    drawXover (xHigh, highF, juce::Colour (0xffd97b4f));
+
+    // 频率刻度
+    g.setFont (juce::FontOptions (10.0f));
+    g.setColour (juce::Colour (0xff6b7280));
+    for (double f : { 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0 })
+    {
+        const int x = xFor (f);
+        g.drawVerticalLine (x, (float) area.getBottom() - 22, (float) area.getBottom() - 16);
+        g.drawText (f >= 1000.0 ? juce::String (f / 1000.0, 0) + "k" : juce::String ((int) f),
+                    x - 18, area.getBottom() - 14, 36, 12, juce::Justification::centred);
+    }
+
+    // 图例
+    g.setFont (juce::FontOptions (11.0f));
+    g.setColour (juce::Colour (0xff8a919c));
+    g.drawText ("Band Map   |   filled height = gain reduction   |   full bar = -20 dB",
+                area.getX() + 10, area.getY() + 6, 460, 14, juce::Justification::centredLeft);
 }
 
 void HanChiAudioProcessorEditor::resized()
