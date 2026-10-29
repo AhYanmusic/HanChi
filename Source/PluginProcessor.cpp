@@ -10,7 +10,12 @@ static const juce::String pLowThr    { "lowThresh" };
 static const juce::String pHighEn    { "highEnable" };
 static const juce::String pHighFreq  { "highFreq" };
 static const juce::String pHighThr   { "highThresh" };
-static const juce::String pStrength  { "strength" };
+static const juce::String pLowStr    { "lowStrength" };
+static const juce::String pHighStr   { "highStrength" };
+static const juce::String pLowRatio  { "lowRatio" };
+static const juce::String pHighRatio { "highRatio" };
+static const juce::String pLowSolo   { "lowSolo" };
+static const juce::String pHighSolo  { "highSolo" };
 static const juce::String pLookahead { "lookahead" };
 static const juce::String pPrecision { "precision" };
 static const juce::String pOs        { "oversampling" };
@@ -31,15 +36,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout HanChiAudioProcessor::create
                  juce::NormalisableRange<float> (4000.0f, 9000.0f, 1.0f, 0.5f), 6000.0f, "Hz"));
     layout.add (std::make_unique<P> (juce::ParameterID (pLowThr, 1), "Low Threshold",
                  juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -30.0f, "dB"));
+    layout.add (std::make_unique<P> (juce::ParameterID (pLowRatio, 1), "Low Ratio",
+                 juce::NormalisableRange<float> (1.5f, 20.0f, 0.5f), 8.0f, ":1"));
+    layout.add (std::make_unique<P> (juce::ParameterID (pLowStr, 1), "Low Strength",
+                 juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 60.0f, "%"));
+    layout.add (std::make_unique<PB> (juce::ParameterID (pLowSolo, 1), "Low Solo", false));
 
     layout.add (std::make_unique<PB> (juce::ParameterID (pHighEn, 1), "High Band", true));
     layout.add (std::make_unique<P> (juce::ParameterID (pHighFreq, 1), "High X-Over Freq",
                  juce::NormalisableRange<float> (7000.0f, 13000.0f, 1.0f, 0.5f), 9500.0f, "Hz"));
     layout.add (std::make_unique<P> (juce::ParameterID (pHighThr, 1), "High Threshold",
                  juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -32.0f, "dB"));
-
-    layout.add (std::make_unique<P> (juce::ParameterID (pStrength, 1), "Strength",
+    layout.add (std::make_unique<P> (juce::ParameterID (pHighRatio, 1), "High Ratio",
+                 juce::NormalisableRange<float> (1.5f, 20.0f, 0.5f), 8.0f, ":1"));
+    layout.add (std::make_unique<P> (juce::ParameterID (pHighStr, 1), "High Strength",
                  juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f), 60.0f, "%"));
+    layout.add (std::make_unique<PB> (juce::ParameterID (pHighSolo, 1), "High Solo", false));
+
     layout.add (std::make_unique<P> (juce::ParameterID (pLookahead, 1), "Lookahead",
                  juce::NormalisableRange<float> (0.0f, 10.0f, 0.1f), 3.0f, "ms"));
 
@@ -83,10 +96,7 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     currentSampleRate = sampleRate;
     currentBlockSize  = samplesPerBlock;
-
-    filtersDirty     = true;
-    oversamplerDirty = true;
-    rebuildOversamplersIfNeeded();
+    currentNumChannels = juce::jmax (1, getMainBusNumInputChannels());
 
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -94,35 +104,64 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
         detHigh[ch].prepare (sampleRate);
         detWide[ch].prepare (sampleRate);
     }
+
+    filtersDirty     = true;
+    oversamplerDirty = true;
+    // 在最后重建：会根据当前超采样率覆盖检测器时基，使分频/检测与超采样率一致
+    rebuildOversamplersIfNeeded();
+
     scratchF.setSize (2, samplesPerBlock, false, false, true);
     scratchD.setSize (2, samplesPerBlock, false, false, true);
 }
 
 void HanChiAudioProcessor::rebuildOversamplersIfNeeded()
 {
+    const int comboIdx = (int) apvts.getRawParameterValue (pOs)->load(); // 0..3 -> 1x,2x,4x,8x
+    const size_t factor = (size_t) 1 << juce::jlimit (0, 3, comboIdx);
+    const int chs = juce::jmax (1, currentNumChannels);
+
+    // 仅在「因子或通道数确实变化」时才重建，避免每 block 重分配
     if (! oversamplerDirty.exchange (false)
-        && chainF.overs != nullptr && chainD.overs != nullptr)
+        && chainF.overs != nullptr && chainD.overs != nullptr
+        && (int) oversamplerFactor.load() == (int) factor
+        && builtChannelCount == chs)
         return;
 
-    const int comboIdx = (int) apvts.getRawParameterValue (pOs)->load(); // 0..3 -> 1x,2x,4x,8x
-    const size_t factor = (size_t) 1 << comboIdx;
-
-    chainF.overs = std::make_unique<juce::dsp::Oversampling<float>> (2, factor,
+    // 关键修复：超采样器必须按「当前主总线实际通道数」构建，
+    // 否则单声道/非 2 通道宿主下 processSamplesUp/Down 通道不匹配 -> 2/4/8x 无声。
+    chainF.overs = std::make_unique<juce::dsp::Oversampling<float>> ((size_t) chs, factor,
                    juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-    chainD.overs = std::make_unique<juce::dsp::Oversampling<double>> (2, factor,
+    chainD.overs = std::make_unique<juce::dsp::Oversampling<double>> ((size_t) chs, factor,
                    juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, true);
 
-    // JUCE 的 Oversampling 走 initProcessing(maxSamplesBeforeOversampling)
     chainF.overs->initProcessing ((size_t) currentBlockSize);
     chainD.overs->initProcessing ((size_t) currentBlockSize);
     chainF.overs->reset();
     chainD.overs->reset();
-    oversamplerFactor = (int) factor;
+
+    oversamplerFactor  = (int) factor;
+    builtChannelCount  = chs;
+
+    // 在超采样率上重设检测器时间常数（与分频器保持一致，频率/时基才正确）
+    prepareDetectors (currentSampleRate * (double) factor);
+    filtersDirty = true;   // 分频器需在超采样率下重算（见 processChain）
+    updateLatency (0);
+}
+
+void HanChiAudioProcessor::prepareDetectors (double fs)
+{
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        detMid[ch].setTimeConstants (fs);
+        detHigh[ch].setTimeConstants (fs);
+        detWide[ch].setTimeConstants (fs);
+    }
 }
 
 void HanChiAudioProcessor::rebuildBiquads()
 {
-    const double fs = currentSampleRate;
+    // 关键修复：分频器系数必须在「超采样率」下计算，否则 2/4/8x 时截止频率成倍偏低。
+    const double fs = currentSampleRate * (double) oversamplerFactor.load();
     const double lf = apvts.getRawParameterValue (pLowFreq)->load();
     const double hf = apvts.getRawParameterValue (pHighFreq)->load();
 
@@ -133,16 +172,24 @@ void HanChiAudioProcessor::rebuildBiquads()
 
 void HanChiAudioProcessor::parameterChanged (const juce::String& id, float)
 {
-    if (id == pOs) oversamplerDirty = true;
+    if (id == pOs)
+    {
+        oversamplerDirty = true;   // 重建超采样器时一并重算检测器/分频器
+    }
     if (id == pLowFreq || id == pHighFreq) filtersDirty = true;
 }
 
 void HanChiAudioProcessor::updateLatency (int lookSamples)
 {
     double osLatency = 0.0;
-    if (oversamplerFactor > 1 && chainF.overs != nullptr)
+    if (oversamplerFactor.load() > 1 && chainF.overs != nullptr)
         osLatency = chainF.overs->getLatencyInSamples();
-    setLatencySamples (juce::roundToInt ((double) lookSamples + osLatency));
+    const int total = juce::roundToInt ((double) lookSamples + osLatency);
+    if (total != lastLatencySamples)
+    {
+        lastLatencySamples = total;
+        setLatencySamples (total);
+    }
 }
 
 //==============================================================================
@@ -208,15 +255,22 @@ template <typename T>
 void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buffer)
 {
     const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
+    const double fsFactor = (double) oversamplerFactor.load();
 
     const bool splitMode  = apvts.getRawParameterValue (pMode)->load() > 0.5f;
     const bool lowEn      = apvts.getRawParameterValue (pLowEn)->load() > 0.5f;
     const bool highEn     = apvts.getRawParameterValue (pHighEn)->load() > 0.5f;
     const double lowThr   = (double) apvts.getRawParameterValue (pLowThr)->load();
     const double highThr  = (double) apvts.getRawParameterValue (pHighThr)->load();
-    const double strength = (double) apvts.getRawParameterValue (pStrength)->load() * 0.01;
+    const double lowStr   = (double) apvts.getRawParameterValue (pLowStr)->load() * 0.01;
+    const double highStr  = (double) apvts.getRawParameterValue (pHighStr)->load() * 0.01;
+    const double lowRatio = (double) apvts.getRawParameterValue (pLowRatio)->load();
+    const double highRatio= (double) apvts.getRawParameterValue (pHighRatio)->load();
+    const bool lowSolo    = apvts.getRawParameterValue (pLowSolo)->load() > 0.5f;
+    const bool highSolo   = apvts.getRawParameterValue (pHighSolo)->load() > 0.5f;
+    // 前瞻按超采样率换算，听感上的延迟时间保持一致
     const int lookSamples = (int) std::round (apvts.getRawParameterValue (pLookahead)->load()
-                                              * 0.001 * currentSampleRate);
+                                              * 0.001 * currentSampleRate * fsFactor);
 
     // 前瞻延迟线尺寸（低 / 中 / 高三段一致，保证求和相位对齐）
     for (int ch = 0; ch < 2; ++ch)
@@ -229,7 +283,7 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
     // 超采样：升频
     T* chPtr[2] { nullptr, nullptr };
     int chunk = 0;
-    if (oversamplerFactor > 1 && c.overs != nullptr)
+    if (fsFactor > 1.0 && c.overs != nullptr)
     {
         auto up = c.overs->processSamplesUp (juce::dsp::AudioBlock<T> (buffer));
         chunk = (int) up.getNumSamples();
@@ -267,21 +321,30 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
                 T gMid = T (1), gHigh = T (1);
                 if (lowEn)
                 {
-                    gMid = (T) detMid[ch].processSample ((double) std::abs (mid), lowThr, strength);
+                    gMid = (T) detMid[ch].processSample ((double) std::abs (mid),  lowThr,  lowStr,  lowRatio);
                     grMidMin = juce::jmin (grMidMin, juce::Decibels::gainToDecibels ((float) gMid));
                 }
                 if (highEn)
                 {
-                    gHigh = (T) detHigh[ch].processSample ((double) std::abs (high), highThr, strength);
+                    gHigh = (T) detHigh[ch].processSample ((double) std::abs (high), highThr, highStr, highRatio);
                     grHighMin = juce::jmin (grHighMin, juce::Decibels::gainToDecibels ((float) gHigh));
                 }
-                out = dLow + dMid * gMid + dHigh * gHigh;
+
+                // Solo：只听被选中的频段（未被选中的频段静音，便于单独检查该段去齿音）
+                const T lowPart  = dLow + dMid * gMid;
+                const T highPart = dHigh * gHigh;
+                if (lowSolo && !highSolo)       out = lowPart;
+                else if (highSolo && !lowSolo)  out = highPart;
+                else                            out = lowPart + highPart;
             }
             else // 宽带模式：检测取中/高段较大包络，整路统一衰减（模拟老式宽带 DeEsser）
             {
                 const T d = c.dMid[ch].pushAndPop (in);
                 const double det = (double) juce::jmax (std::abs (mid), std::abs (high));
-                const T g = (T) detWide[ch].processSample (det, lowThr, strength);
+                // 宽带模式用两段的平均比例/强度
+                const T g = (T) detWide[ch].processSample (det, lowThr,
+                                                          (lowStr + highStr) * 0.5,
+                                                          (lowRatio + highRatio) * 0.5);
                 grMidMin = juce::jmin (grMidMin, juce::Decibels::gainToDecibels ((float) g));
                 out = d * g;
             }
@@ -290,7 +353,7 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
     }
 
     // 超采样：降频
-    if (oversamplerFactor > 1 && c.overs != nullptr)
+    if (fsFactor > 1.0 && c.overs != nullptr)
     {
         auto outBlock = juce::dsp::AudioBlock<T> (buffer);
         c.overs->processSamplesDown (outBlock);
@@ -354,29 +417,29 @@ void HanChiAudioProcessor::applyParamValues (const std::map<juce::String, float>
 void HanChiAudioProcessor::applyBuiltinTemplate (const juce::String& name)
 {
     if (name == "Male Standard")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},
-                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pStrength,55},{pLookahead,3} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},{pLowRatio,6},{pLowStr,55},
+                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pHighRatio,8},{pHighStr,60},{pLookahead,3} });
     else if (name == "Female Standard")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-26},
-                            {pHighEn,1},{pHighFreq,10000},{pHighThr,-28},{pStrength,60},{pLookahead,3} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-26},{pLowRatio,8},{pLowStr,60},
+                            {pHighEn,1},{pHighFreq,10000},{pHighThr,-28},{pHighRatio,10},{pHighStr,65},{pLookahead,3} });
     else if (name == "Heavy Sibilance")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5500},{pLowThr,-22},
-                            {pHighEn,1},{pHighFreq,9000},{pHighThr,-24},{pStrength,80},{pLookahead,4} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5500},{pLowThr,-22},{pLowRatio,10},{pLowStr,80},
+                            {pHighEn,1},{pHighFreq,9000},{pHighThr,-24},{pHighRatio,12},{pHighStr,85},{pLookahead,4} });
     else if (name == "Bright Female")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,7000},{pLowThr,-28},
-                            {pHighEn,1},{pHighFreq,11000},{pHighThr,-26},{pStrength,50},{pLookahead,3} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,7000},{pLowThr,-28},{pLowRatio,8},{pLowStr,50},
+                            {pHighEn,1},{pHighFreq,11000},{pHighThr,-26},{pHighRatio,8},{pHighStr,55},{pLookahead,3} });
     else if (name == "Rap / Hard")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5000},{pLowThr,-20},
-                            {pHighEn,1},{pHighFreq,8500},{pHighThr,-22},{pStrength,90},{pLookahead,5} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,5000},{pLowThr,-20},{pLowRatio,12},{pLowStr,90},
+                            {pHighEn,1},{pHighFreq,8500},{pHighThr,-22},{pHighRatio,14},{pHighStr,95},{pLookahead,5} });
     else if (name == "Folk / Guzheng Light")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-34},
-                            {pHighEn,1},{pHighFreq,10000},{pHighThr,-36},{pStrength,35},{pLookahead,2} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6500},{pLowThr,-34},{pLowRatio,4},{pLowStr,35},
+                            {pHighEn,1},{pHighFreq,10000},{pHighThr,-36},{pHighRatio,6},{pHighStr,40},{pLookahead,2} });
     else if (name == "Voice-over Broadcast")
-        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-24},
-                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-25},{pStrength,75},{pLookahead,4} });
+        applyParamValues ({ {pMode,1},{pLowEn,1},{pLowFreq,6000},{pLowThr,-24},{pLowRatio,8},{pLowStr,75},
+                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-25},{pHighRatio,10},{pHighStr,80},{pLookahead,4} });
     else if (name == "Broadband Vintage De-Esser")
-        applyParamValues ({ {pMode,0},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},
-                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pStrength,60},{pLookahead,2} });
+        applyParamValues ({ {pMode,0},{pLowEn,1},{pLowFreq,6000},{pLowThr,-30},{pLowRatio,6},{pLowStr,60},
+                            {pHighEn,1},{pHighFreq,9500},{pHighThr,-32},{pHighRatio,8},{pHighStr,60},{pLookahead,2} });
 }
 
 bool HanChiAudioProcessor::saveUserTemplate (const juce::String& name)
