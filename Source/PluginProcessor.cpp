@@ -343,7 +343,7 @@ juce::File HanChiAudioProcessor::getUserTemplateDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                    .getChildFile ("HanChi").getChildFile ("Templates");
-    dir.createDirectoryIfMissing();
+    dir.createDirectory();
     return dir;
 }
 

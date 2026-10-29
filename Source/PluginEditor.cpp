@@ -109,8 +109,10 @@ void HanChiAudioProcessorEditor::refreshTemplateList (const juce::String& select
 
     if (selectName.isNotEmpty())
     {
-        const int sel = templateBox.indexOfText (selectName);
-        templateBox.setSelectedItemIndex (sel > 0 ? sel - 1 : 0, juce::dontSendNotification);
+        int sel = 0;
+        for (int i = 0; i < templateBox.getNumItems(); ++i)
+            if (templateBox.getItemText (i) == selectName) { sel = i; break; }
+        templateBox.setSelectedItemIndex (sel, juce::dontSendNotification);
     }
     else
     {
