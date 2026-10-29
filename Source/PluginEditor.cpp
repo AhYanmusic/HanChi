@@ -5,7 +5,7 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setResizable (true, true);
-    setResizeLimits (760, 660, 1200, 980);
+    setResizeLimits (880, 720, 1400, 1100);
 
     auto initSlider = [this] (juce::Slider& s, juce::Label& l, const juce::String& text)
     {
@@ -19,25 +19,35 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
 
     initSlider (lowFreqSlider,   lowFreqLabel,   "Low X-Over");
     initSlider (lowThrSlider,    lowThrLabel,    "Low Thresh");
+    initSlider (lowRatioSlider,  lowRatioLabel,  "Low Ratio");
+    initSlider (lowStrSlider,    lowStrLabel,    "Low Strength");
     initSlider (highFreqSlider,  highFreqLabel,  "High X-Over");
     initSlider (highThrSlider,   highThrLabel,   "High Thresh");
-    initSlider (strengthSlider,  strengthLabel,  "Strength");
+    initSlider (highRatioSlider, highRatioLabel, "High Ratio");
+    initSlider (highStrSlider,   highStrLabel,   "High Strength");
     initSlider (lookaheadSlider, lookaheadLabel, "Lookahead");
 
     lowFreqSlider.setColour  (juce::Slider::rotarySliderFillColourId, juce::Colour (0xff4f9ddb));
     highFreqSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffd97b4f));
 
-    lowFreqAttach   = std::make_unique<SliderAttach> (processor.apvts, "lowFreq",    lowFreqSlider);
-    lowThrAttach    = std::make_unique<SliderAttach> (processor.apvts, "lowThresh",  lowThrSlider);
-    highFreqAttach  = std::make_unique<SliderAttach> (processor.apvts, "highFreq",   highFreqSlider);
-    highThrAttach   = std::make_unique<SliderAttach> (processor.apvts, "highThresh", highThrSlider);
-    strengthAttach  = std::make_unique<SliderAttach> (processor.apvts, "strength",   strengthSlider);
-    lookaheadAttach = std::make_unique<SliderAttach> (processor.apvts, "lookahead",  lookaheadSlider);
+    lowFreqAttach    = std::make_unique<SliderAttach> (processor.apvts, "lowFreq",     lowFreqSlider);
+    lowThrAttach     = std::make_unique<SliderAttach> (processor.apvts, "lowThresh",   lowThrSlider);
+    lowRatioAttach   = std::make_unique<SliderAttach> (processor.apvts, "lowRatio",    lowRatioSlider);
+    lowStrAttach     = std::make_unique<SliderAttach> (processor.apvts, "lowStrength", lowStrSlider);
+    highFreqAttach   = std::make_unique<SliderAttach> (processor.apvts, "highFreq",    highFreqSlider);
+    highThrAttach    = std::make_unique<SliderAttach> (processor.apvts, "highThresh",  highThrSlider);
+    highRatioAttach  = std::make_unique<SliderAttach> (processor.apvts, "highRatio",   highRatioSlider);
+    highStrAttach    = std::make_unique<SliderAttach> (processor.apvts, "highStrength",highStrSlider);
+    lookaheadAttach  = std::make_unique<SliderAttach> (processor.apvts, "lookahead",   lookaheadSlider);
 
     lowEnableAttach  = std::make_unique<ButtonAttach> (processor.apvts, "lowEnable",  lowEnableButton);
     highEnableAttach = std::make_unique<ButtonAttach> (processor.apvts, "highEnable", highEnableButton);
+    lowSoloAttach    = std::make_unique<ButtonAttach> (processor.apvts, "lowSolo",    lowSoloButton);
+    highSoloAttach   = std::make_unique<ButtonAttach> (processor.apvts, "highSolo",   highSoloButton);
     addAndMakeVisible (lowEnableButton);
     addAndMakeVisible (highEnableButton);
+    addAndMakeVisible (lowSoloButton);
+    addAndMakeVisible (highSoloButton);
 
     auto initCombo = [this] (juce::ComboBox& c, juce::Label& l, const juce::String& text)
     {
@@ -82,7 +92,7 @@ HanChiAudioProcessorEditor::HanChiAudioProcessorEditor (HanChiAudioProcessor& p)
     };
     refreshTemplateList();
 
-    setSize (860, 730);
+    setSize (980, 840);
     startTimerHz (30);
 }
 
@@ -105,6 +115,11 @@ void HanChiAudioProcessorEditor::timerCallback()
     };
     track (peakLowDb,  grL);
     track (peakHighDb, grH);
+
+    // Solo 仅对「分频段(Split)」模式有意义；宽带模式下禁用（状态保留，切回 Split 仍生效）
+    const bool splitMode = processor.apvts.getParameter ("mode")->getValue() > 0.5f;
+    lowSoloButton.setEnabled (splitMode);
+    highSoloButton.setEnabled (splitMode);
 
     repaint();
 }
@@ -187,10 +202,14 @@ void HanChiAudioProcessorEditor::paint (juce::Graphics& g)
     area.removeFromTop (8);
     area.removeFromTop (26);    // 选项行
     area.removeFromTop (12);
-    area.removeFromTop (210);   // 旋钮区
-    area.removeFromTop (8);
-    area.removeFromTop (26);    // 频段启用
-    area.removeFromTop (12);
+    area.removeFromTop (96);    // 低区旋钮行
+    area.removeFromTop (6);
+    area.removeFromTop (26);    // 低区开关行（启用 / Solo）
+    area.removeFromTop (10);
+    area.removeFromTop (96);    // 高区旋钮行
+    area.removeFromTop (6);
+    area.removeFromTop (26);    // 高区开关行（启用 / Solo）
+    area.removeFromTop (10);
     drawBandGraph (g, area);
 }
 
@@ -220,6 +239,7 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     const float grL   = processor.grLowDb.load();
     const float grH   = processor.grHighDb.load();
     const float maxDb = 20.0f;   // 满格 = -20 dB
+    const bool splitMode = processor.apvts.getParameter ("mode")->getValue() > 0.5f;
 
     auto plot = area.reduced (8);
     plot.removeFromTop (16);      // 图例行
@@ -229,12 +249,12 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     const int bodyY = plot.getY() + nameH;
     const int bodyH = juce::jmax (0, plot.getBottom() - bodyY);
 
-    struct Zone { int x0, x1; juce::Colour c; juce::String name; float gr; float peak; };
+    struct Zone { int x0, x1; juce::Colour c; juce::String name; float gr; float peak; bool solo; };
     const Zone zones[]
     {
-        { plot.getX(),  xLow,             juce::Colour (0xff6b7280), "Pass-through (dry)",       0.0f,   0.0f },
-        { xLow,         xHigh,            juce::Colour (0xff4f9ddb), "Low Band  (s / sh / c)",   grL,    peakLowDb  },
-        { xHigh,        plot.getRight(),  juce::Colour (0xffd97b4f), "High Band  (hiss/sizzle)", grH,    peakHighDb }
+        { plot.getX(),  xLow,             juce::Colour (0xff6b7280), "Pass-through (dry)",       0.0f,   0.0f,       false },
+        { xLow,         xHigh,            juce::Colour (0xff4f9ddb), "Low Band  (s / sh / c)",   grL,    peakLowDb,  (splitMode && lowSoloButton.getToggleState())  },
+        { xHigh,        plot.getRight(),  juce::Colour (0xffd97b4f), "High Band  (hiss/sizzle)", grH,    peakHighDb, (splitMode && highSoloButton.getToggleState()) }
     };
 
     for (const auto& z : zones)
@@ -265,6 +285,14 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
             g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
             g.setColour (juce::Colours::white);
             g.drawText (juce::String (z.gr, 1) + " dB", zr.reduced (4), juce::Justification::centred);
+        }
+
+        // Solo 指示
+        if (z.solo)
+        {
+            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            g.setColour (juce::Colour (0xffe6c34a));
+            g.drawText ("SOLO", z.x0 + 2, bodyY + 2, z.x1 - z.x0 - 4, 14, juce::Justification::centredRight);
         }
 
         // 峰值保持线：显示这一两秒内压到过的最深值
@@ -351,29 +379,43 @@ void HanChiAudioProcessorEditor::resized()
 
     area.removeFromTop (12);
 
-    // 旋钮区（6 列）
-    auto knobs = area.removeFromTop (210);
-    const int kw = knobs.getWidth() / 6;
-
-    auto place = [&] (juce::Slider& s, juce::Label& l, int index)
+    // 旋钮放置助手：在给定列里放一个旋钮 + 其标签
+    auto placeKnob = [] (juce::Rectangle<int> col, juce::Slider& s, juce::Label& l)
     {
-        auto col = knobs.removeFromLeft (kw);
-        if (index == 5) col = knobs; // 最后一列吃掉剩余宽度
-        auto cell = col.reduced (6);
-        s.setBounds (cell.removeFromTop (cell.getHeight() - 24));
-        l.setBounds (cell.removeFromBottom (24));
+        auto cell = col.reduced (8, 2);
+        s.setBounds (cell.removeFromTop (cell.getHeight() - 22));
+        l.setBounds (cell.removeFromBottom (22));
     };
+    const int kw5 = area.getWidth() / 5;   // 每行 5 列
 
-    place (lowFreqSlider,   lowFreqLabel,   0);
-    place (lowThrSlider,    lowThrLabel,    1);
-    place (highFreqSlider,  highFreqLabel,  2);
-    place (highThrSlider,   highThrLabel,   3);
-    place (strengthSlider,  strengthLabel,  4);
-    place (lookaheadSlider, lookaheadLabel, 5);
+    // ---- 低区旋钮行（Low X-Over / Low Thresh / Low Ratio / Low Strength / Lookahead） ----
+    auto lowKnobs = area.removeFromTop (96);
+    placeKnob (lowKnobs.removeFromLeft (kw5), lowFreqSlider,   lowFreqLabel);
+    placeKnob (lowKnobs.removeFromLeft (kw5), lowThrSlider,    lowThrLabel);
+    placeKnob (lowKnobs.removeFromLeft (kw5), lowRatioSlider,  lowRatioLabel);
+    placeKnob (lowKnobs.removeFromLeft (kw5), lowStrSlider,    lowStrLabel);
+    placeKnob (lowKnobs,                      lookaheadSlider, lookaheadLabel); // 最后一列吃剩余
 
-    area.removeFromTop (8);
-    auto bandRow = area.removeFromTop (26);
-    lowEnableButton.setBounds  (bandRow.removeFromLeft (100).reduced (4));
-    bandRow.removeFromLeft (24);
-    highEnableButton.setBounds (bandRow.removeFromLeft (100).reduced (4));
+    area.removeFromTop (6);
+    auto lowToggles = area.removeFromTop (26);
+    lowEnableButton.setBounds (lowToggles.removeFromLeft (110).reduced (4));
+    lowToggles.removeFromLeft (12);
+    lowSoloButton.setBounds   (lowToggles.removeFromLeft (90).reduced (4));
+
+    area.removeFromTop (10);
+
+    // ---- 高区旋钮行（High X-Over / High Thresh / High Ratio / High Strength） ----
+    auto highKnobs = area.removeFromTop (96);
+    placeKnob (highKnobs.removeFromLeft (kw5), highFreqSlider,  highFreqLabel);
+    placeKnob (highKnobs.removeFromLeft (kw5), highThrSlider,   highThrLabel);
+    placeKnob (highKnobs.removeFromLeft (kw5), highRatioSlider, highRatioLabel);
+    placeKnob (highKnobs.removeFromLeft (kw5), highStrSlider,   highStrLabel);
+
+    area.removeFromTop (6);
+    auto highToggles = area.removeFromTop (26);
+    highEnableButton.setBounds (highToggles.removeFromLeft (110).reduced (4));
+    highToggles.removeFromLeft (12);
+    highSoloButton.setBounds   (highToggles.removeFromLeft (90).reduced (4));
+
+    area.removeFromTop (10);
 }
