@@ -188,7 +188,7 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     g.setColour (juce::Colour (0xff15191f));
     g.fillRoundedRectangle (area.toFloat(), 6.0f);
 
-    const double fMin = 200.0, fMax = 20000.0;
+    const double fMin = 1000.0, fMax = 20000.0;
     const double logMin  = std::log (fMin);
     const double logSpan = std::log (fMax) - logMin;
 
@@ -267,14 +267,27 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     drawXover (xLow,  lowF,  juce::Colour (0xff4f9ddb));
     drawXover (xHigh, highF, juce::Colour (0xffd97b4f));
 
+    // dB 参考线（-20 dB 顶部 / -10 dB 中线）
+    g.setFont (juce::FontOptions (9.0f));
+    for (float db : { -20.0f, -10.0f })
+    {
+        const float fr = juce::jlimit (0.0f, 1.0f, -db / maxDb);
+        const int y = bodyY + (int) ((float) bodyH * fr);
+        g.setColour (juce::Colour (0xff2a2f38));
+        g.drawHorizontalLine (y, (float) plot.getX(), (float) plot.getRight());
+        g.setColour (juce::Colour (0xff6b7280));
+        g.drawText (juce::String (db, 0) + " dB", plot.getRight() - 44, y - 11, 44, 11,
+                    juce::Justification::centredRight);
+    }
+
     // 频率刻度
     g.setFont (juce::FontOptions (10.0f));
     g.setColour (juce::Colour (0xff6b7280));
-    for (double f : { 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0 })
+    for (double f : { 1000.0, 2000.0, 3000.0, 5000.0, 7000.0, 10000.0, 15000.0, 20000.0 })
     {
         const int x = xFor (f);
         g.drawVerticalLine (x, (float) area.getBottom() - 22, (float) area.getBottom() - 16);
-        g.drawText (f >= 1000.0 ? juce::String (f / 1000.0, 0) + "k" : juce::String ((int) f),
+        g.drawText (juce::String (f / 1000.0, 0) + "k",
                     x - 18, area.getBottom() - 14, 36, 12, juce::Justification::centred);
     }
 
