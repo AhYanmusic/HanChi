@@ -48,5 +48,8 @@ private:
     std::unique_ptr<ComboAttach>  modeAttach, precisionAttach, oversamplingAttach;
     std::unique_ptr<ButtonAttach> lowEnableAttach, highEnableAttach;
 
+    float peakLowDb  = 0.0f;   // 峰值保持（负值，dB）
+    float peakHighDb = 0.0f;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HanChiAudioProcessorEditor)
 };

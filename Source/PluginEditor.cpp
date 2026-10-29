@@ -93,6 +93,19 @@ HanChiAudioProcessorEditor::~HanChiAudioProcessorEditor()
 
 void HanChiAudioProcessorEditor::timerCallback()
 {
+    const float grL = processor.grLowDb.load();
+    const float grH = processor.grHighDb.load();
+
+    // 峰值保持：立刻跟随更大的削减，之后缓慢回落（约 1.5 s）
+    auto track = [] (float& peak, float cur)
+    {
+        if (cur < peak)                 peak = cur;
+        else                            peak += (cur - peak) * 0.03f;
+        if (peak > 0.0f)                peak = 0.0f;
+    };
+    track (peakLowDb,  grL);
+    track (peakHighDb, grH);
+
     repaint();
 }
 
@@ -188,7 +201,7 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     g.setColour (juce::Colour (0xff15191f));
     g.fillRoundedRectangle (area.toFloat(), 6.0f);
 
-    const double fMin = 1000.0, fMax = 20000.0;
+    const double fMin = 2000.0, fMax = 20000.0;
     const double logMin  = std::log (fMin);
     const double logSpan = std::log (fMax) - logMin;
 
@@ -216,12 +229,12 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     const int bodyY = plot.getY() + nameH;
     const int bodyH = juce::jmax (0, plot.getBottom() - bodyY);
 
-    struct Zone { int x0, x1; juce::Colour c; juce::String name; float gr; };
+    struct Zone { int x0, x1; juce::Colour c; juce::String name; float gr; float peak; };
     const Zone zones[]
     {
-        { plot.getX(),  xLow,             juce::Colour (0xff6b7280), "Pass-through (dry)",       0.0f },
-        { xLow,         xHigh,            juce::Colour (0xff4f9ddb), "Low Band  (s / sh / c)",   grL  },
-        { xHigh,        plot.getRight(),  juce::Colour (0xffd97b4f), "High Band  (hiss/sizzle)", grH  }
+        { plot.getX(),  xLow,             juce::Colour (0xff6b7280), "Pass-through (dry)",       0.0f,   0.0f },
+        { xLow,         xHigh,            juce::Colour (0xff4f9ddb), "Low Band  (s / sh / c)",   grL,    peakLowDb  },
+        { xHigh,        plot.getRight(),  juce::Colour (0xffd97b4f), "High Band  (hiss/sizzle)", grH,    peakHighDb }
     };
 
     for (const auto& z : zones)
@@ -253,6 +266,18 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
             g.setColour (juce::Colours::white);
             g.drawText (juce::String (z.gr, 1) + " dB", zr.reduced (4), juce::Justification::centred);
         }
+
+        // 峰值保持线：显示这一两秒内压到过的最深值
+        if (z.peak < -0.05f && bodyH > 4)
+        {
+            const float pf = juce::jlimit (0.0f, 1.0f, -z.peak / maxDb);
+            const int py = bodyY + (int) ((float) bodyH * pf);
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.drawHorizontalLine (py, (float) (z.x0 + 2), (float) (z.x1 - 2));
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText ("peak " + juce::String (z.peak, 1),
+                        z.x0 + 2, py - 12, z.x1 - z.x0 - 4, 11, juce::Justification::centredRight);
+        }
     }
 
     // 分频点竖线 + 频率数值
@@ -283,7 +308,7 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     // 频率刻度
     g.setFont (juce::FontOptions (10.0f));
     g.setColour (juce::Colour (0xff6b7280));
-    for (double f : { 1000.0, 2000.0, 3000.0, 5000.0, 7000.0, 10000.0, 15000.0, 20000.0 })
+    for (double f : { 2000.0, 3000.0, 5000.0, 7000.0, 10000.0, 15000.0, 20000.0 })
     {
         const int x = xFor (f);
         g.drawVerticalLine (x, (float) area.getBottom() - 22, (float) area.getBottom() - 16);
@@ -294,8 +319,8 @@ void HanChiAudioProcessorEditor::drawBandGraph (juce::Graphics& g, juce::Rectang
     // 图例
     g.setFont (juce::FontOptions (11.0f));
     g.setColour (juce::Colour (0xff8a919c));
-    g.drawText ("Band Map   |   filled height = gain reduction   |   full bar = -20 dB",
-                area.getX() + 10, area.getY() + 6, 460, 14, juce::Justification::centredLeft);
+    g.drawText ("Band Map   |   filled height = gain reduction   |   white line = peak   |   full bar = -20 dB",
+                area.getX() + 10, area.getY() + 6, 560, 14, juce::Justification::centredLeft);
 }
 
 void HanChiAudioProcessorEditor::resized()
