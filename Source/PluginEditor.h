@@ -18,6 +18,7 @@ private:
     void refreshTemplateList (const juce::String& selectName = {});
     void applySelectedTemplate();
     void saveTemplateDialog();
+    void drawBandGraph (juce::Graphics&, juce::Rectangle<int>);
 
     HanChiAudioProcessor& processor;
 
