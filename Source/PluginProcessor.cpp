@@ -418,6 +418,11 @@ bool HanChiAudioProcessor::deleteUserTemplate (const juce::String& name)
 }
 
 //==============================================================================
+juce::AudioProcessorEditor* HanChiAudioProcessor::createEditor()
+{
+    return new HanChiAudioProcessorEditor (*this);
+}
+
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new HanChiAudioProcessor();
