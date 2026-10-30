@@ -9,7 +9,7 @@
 #include <vector>
 
 //==============================================================================
-/** HanChi 汉齿 · 中文齿音 VST3 插件（v1.3）
+/** HanChi 汉齿 · 中文齿音 VST3 插件（v1.4）
  *
  *  双频段动态去齿音：低区 4-9kHz（嘶/嘘，s x c z）+ 高区 7-13kHz（咝/刺感），
  *  Linkwitz-Riley（两极级联 Butterworth Q=0.7071）4 阶分频；
@@ -183,6 +183,7 @@ private:
         Biquad<T>    lowLP[2], midHP[2], midLP[2], highHP[2];
         DelayLine<T> dLow[2], dMid[2], dHigh[2];
         std::unique_ptr<juce::dsp::Oversampling<T>> overs;
+        juce::AudioBuffer<T> osBuf;   // 超采样工作缓冲：容量 = 最大块长 × 8，固定 2 通道
 
         void prepareFilters (double fs, double lowFreq, double highFreq)
         {
@@ -202,8 +203,6 @@ private:
 
     double currentSampleRate = 48000.0;
     int    currentBlockSize  = 512;
-    int    currentNumChannels = 2;     // 主输入总线实际通道数
-    int    builtChannelCount  = 0;     // 超采样器已构建的通道数
     int    lastLatencySamples = 0;     // 上次上报的延迟，避免每 block 重复 setLatencySamples
 
     // 检测器（double 运算，两条路径共用，只有一条路径在同一时间运行）
