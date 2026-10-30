@@ -190,6 +190,75 @@ void testCrossoverResponse()
     }
 }
 
+
+// Isolates JUCE's oversampler: feed an 8 kHz tone at 48 kHz, look at what
+// actually comes out of processSamplesUp().
+void testOversamplerIsolation()
+{
+    std::cout << "\n[oversampler isolation] 8 kHz tone @ 48 kHz, upsampled\n";
+
+    const int blockSize = 512;
+
+    for (int f : { 2, 4, 8 })
+    {
+        juce::dsp::Oversampling<double> os ((size_t) 2, (size_t) f,
+            juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, false);
+        os.initProcessing ((size_t) blockSize);
+        os.reset();
+
+        juce::AudioBuffer<double> buf (2, blockSize);
+
+        double sumSq = 0.0, diffSq = 0.0;
+        long long n = 0;
+        double prev = 0.0;
+        bool havePrev = false;
+
+        for (int b = 0; b < 120; ++b)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* w = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const double t = (double) (b * blockSize + i) / 48000.0;
+                    w[i] = 0.5 * std::sin (2.0 * kPi * 8000.0 * t);
+                }
+            }
+
+            auto block = juce::dsp::AudioBlock<double> (buf);
+            juce::dsp::AudioBlock<const double> cblock (block);
+            auto up = os.processSamplesUp (cblock);
+
+            if (b == 0)
+                std::cout << "  " << f << "x: up.getNumSamples() = " << (int) up.getNumSamples()
+                          << " (expected " << blockSize * f << ")\n";
+
+            if (b >= 60)
+            {
+                const double* p = up.getChannelPointer (0);
+                for (int i = 0; i < (int) up.getNumSamples(); ++i)
+                {
+                    const double v = p[i];
+                    sumSq += v * v;
+                    if (havePrev) { const double d = v - prev; diffSq += d * d; ++n; }
+                    prev = v; havePrev = true;
+                }
+            }
+
+            os.processSamplesDown (block);
+        }
+
+        const double rms  = std::sqrt (sumSq / (double) n);
+        const double drms = std::sqrt (diffSq / (double) n);
+        const double ref  = referenceRms (0.5);
+
+        std::cout << "  " << f << "x: upsampled rms " << toDb (rms / ref)
+                  << " dB vs input, diffRms/rms = " << (drms / rms)
+                  << " (8 kHz at " << 48000 * f << " Hz expects "
+                  << 2.0 * std::sin (kPi * 8000.0 / (48000.0 * f)) << ")\n";
+    }
+}
+
 template <typename T>
 void testPrecision (const std::string& label, double fs, int blockSize)
 {
@@ -441,6 +510,7 @@ int main()
     std::cout << "====================\n";
 
     testCrossoverResponse();
+    testOversamplerIsolation();
 
     testPrecision<float>  ("32-bit float", 48000.0, 512);
     testPrecision<double> ("64-bit float", 48000.0, 512);
