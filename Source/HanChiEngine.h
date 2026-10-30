@@ -306,14 +306,42 @@ public:
         // 1x needs no oversampler; 2x / 4x / 8x are built here, once.
         os[0] = nullptr;
 
+        // The constructor's second argument is the NUMBER OF 2x STAGES in
+        // JUCE 8: pass 1 for 2x, 2 for 4x, 3 for 8x. Passing the ratio itself
+        // (2/4/8) silently produces 4x/16x/256x, which throws every filter
+        // designed against fs * factor completely off. We still measure the
+        // real ratio below rather than trusting either reading.
         for (int i = 1; i <= 3; ++i)
         {
-            const size_t factor = (size_t) (1 << i);   // 2, 4, 8
             os[i] = std::make_unique<juce::dsp::Oversampling<T>> (
-                        (size_t) 2, factor,
+                        (size_t) 2, (size_t) i,
                         juce::dsp::Oversampling<T>::filterHalfBandPolyphaseIIR,
                         false);
             os[i]->initProcessing ((size_t) maxBlock);
+        }
+
+        // Probe the ratio each instance actually delivers.
+        osFactor[0] = 1;
+        osFactor[1] = 2;
+        osFactor[2] = 4;
+        osFactor[3] = 8;
+
+        for (int i = 1; i <= 3; ++i)
+        {
+            if (os[i] == nullptr)
+                continue;
+
+            juce::AudioBuffer<T> probe (2, maxBlock);
+            probe.clear();
+
+            auto blk  = juce::dsp::AudioBlock<T> (probe);
+            juce::dsp::AudioBlock<const T> cblk (blk);
+            auto up = os[i]->processSamplesUp (cblk);
+
+            const int got = (maxBlock > 0) ? (int) (up.getNumSamples() / (size_t) maxBlock) : 0;
+            if (got >= 1)
+                osFactor[i] = got;
+
             os[i]->reset();
         }
 
@@ -419,12 +447,11 @@ public:
             }
         }
 
-        const int factor = (p.osFactor == 8) ? 8
-                         : (p.osFactor == 4) ? 4
-                         : (p.osFactor == 2) ? 2 : 1;
-        const int osIdx  = (factor == 8) ? 3
-                         : (factor == 4) ? 2
-                         : (factor == 2) ? 1 : 0;
+        const int osIdx  = juce::jlimit (0, 3, (p.osFactor == 8) ? 3
+                                            : (p.osFactor == 4) ? 2
+                                            : (p.osFactor == 2) ? 1 : 0);
+        // The real ratio this instance runs at (measured at prepare time).
+        const int factor = (osIdx == 0) ? 1 : osFactor[osIdx];
 
         updateFiltersAndDetectors (p, factor);
 
@@ -470,8 +497,8 @@ public:
             // block (which silently wrecks the crossover response).
             const int want = nSafe * factor;
 
-            if (up.getNumSamples() < (size_t) want)
-                return;   // defensive: the output is left untouched -> safe
+            if (up.getNumSamples() != (size_t) want)
+                return;   // unexpected ratio: leave the output untouched -> safe
 
             chunk  = want;
             ptr[0] = up.getChannelPointer (0);
@@ -718,7 +745,8 @@ private:
     bool   prepared = false;
 
     std::unique_ptr<juce::dsp::Oversampling<T>> os[4];
-    int osLatency[4] = { 0, 0, 0, 0 };
+    int osLatency[4]  = { 0, 0, 0, 0 };
+    int osFactor[4]   = { 1, 2, 4, 8 };   // measured real ratio per instance
 
     int lookOrigMax = 482;
     int lookMax     = 3860;
