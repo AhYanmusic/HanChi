@@ -274,6 +274,10 @@ struct Diagnostics
     double lowRawSq = 0.0;          // low BEFORE the lookahead delay
     long long zeroCross = 0;        // sign changes of the upsampled signal
     int lastSign = 0;
+    double diffSq = 0.0;            // energy of first difference (high-freq content)
+    double lastIn = 0.0;
+    int captured = 0;
+    double first[24] = {};
     double gLowMin = 1.0, gLowMax = 0.0;
     double gHighMin = 1.0, gHighMax = 0.0;
     long long n = 0;
@@ -555,6 +559,19 @@ public:
                         if (p.highEn)  out -= (T (1) - gHigh) * dHigh;
 
                         diag.lowRawSq += (double) low * (double) low;
+
+                        if (ch == 0)
+                        {
+                            const double dv = (double) in;
+                            if (diag.n > 0)
+                            {
+                                const double d = dv - diag.lastIn;
+                                diag.diffSq += d * d;
+                            }
+                            diag.lastIn = dv;
+                            if (diag.captured < 24)
+                                diag.first[diag.captured++] = dv;
+                        }
 
                         const int sign = (in > T (0)) ? 1 : -1;
                         if (diag.lastSign != 0 && sign != diag.lastSign)
