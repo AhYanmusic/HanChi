@@ -307,7 +307,7 @@ public:
 
         for (int ch = 0; ch < 2; ++ch)
         {
-            for (int b = 0; b < 3; ++b)
+            for (int b = 0; b < 4; ++b)
                 lookDelay[ch][b].prepare (lookMax);
 
             trim[ch].prepare (trimMax);
@@ -331,7 +331,7 @@ public:
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            for (int b = 0; b < 3; ++b)
+            for (int b = 0; b < 4; ++b)
                 lookDelay[ch][b].reset();
 
             xover[ch].reset();
@@ -459,9 +459,10 @@ public:
 
                 if (p.splitMode)
                 {
-                    const T dLow  = lookDelay[ch][0].process (low,  lookOs);
-                    const T dMid  = lookDelay[ch][1].process (mid,  lookOs);
-                    const T dHigh = lookDelay[ch][2].process (high, lookOs);
+                    const T dIn   = lookDelay[ch][0].process (in,   lookOs);
+                    const T dLow  = lookDelay[ch][1].process (low,  lookOs);
+                    const T dMid  = lookDelay[ch][2].process (mid,  lookOs);
+                    const T dHigh = lookDelay[ch][3].process (high, lookOs);
 
                     T gLow = T (1), gHigh = T (1);
 
@@ -481,18 +482,42 @@ public:
                                                 juce::Decibels::gainToDecibels ((float) gHigh, -200.0f));
                     }
 
-                    const T lowPart  = dLow + dMid * gLow;
-                    const T highPart = dHigh * gHigh;
+                    if (p.lowSolo && ! p.highSolo)
+                    {
+                        out = dLow + dMid * gLow;          // audition everything below f2
+                    }
+                    else if (p.highSolo && ! p.lowSolo)
+                    {
+                        out = dHigh * gHigh;               // audition everything above f2
+                    }
+                    else
+                    {
+                        // Subtractive processing.
+                        //
+                        // Start from the untouched (delayed) signal and remove
+                        // only the sibilance bands by the amount each detector
+                        // asks for:
+                        //
+                        //     out = in - (1 - gLow) * mid - (1 - gHigh) * high
+                        //
+                        // A crossover tree never sums back to exactly unity
+                        // (the second split contributes an allpass, not an
+                        // identity), so the naive "sum the bands" form leaks
+                        // energy and cancels out the gain reduction. Working
+                        // subtractively means zero gain reduction is an exact
+                        // bypass at every oversampling factor, and the amount
+                        // removed is always the true band content.
+                        out = dIn;
 
-                    if (p.lowSolo && ! p.highSolo)       out = lowPart;
-                    else if (p.highSolo && ! p.lowSolo)  out = highPart;
-                    else                                 out = lowPart + highPart;
+                        if (p.lowEn)   out -= (T (1) - gLow)  * dMid;
+                        if (p.highEn)  out -= (T (1) - gHigh) * dHigh;
+                    }
                 }
                 else
                 {
                     // Broadband: one gain applied to the whole signal,
                     // detector fed by the louder of the two sibilance bands.
-                    const T d = lookDelay[ch][1].process (in, lookOs);
+                    const T d = lookDelay[ch][0].process (in, lookOs);
 
                     const double det = juce::jmax (std::abs ((double) mid),
                                                    std::abs ((double) high));
@@ -625,7 +650,7 @@ private:
 
     Crossover<T> xover[2];
 
-    VarDelay<T> lookDelay[2][3];   // low / mid / high, per channel
+    VarDelay<T> lookDelay[2][4];   // in / low / mid / high, per channel
     VarDelay<T> trim[2];
 
     Detector detLow[2], detHigh[2], detWide[2];
