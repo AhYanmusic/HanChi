@@ -96,7 +96,6 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     currentSampleRate = sampleRate;
     currentBlockSize  = samplesPerBlock;
-    currentNumChannels = juce::jmax (1, getMainBusNumInputChannels());
 
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -110,6 +109,11 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     // 在最后重建：会根据当前超采样率覆盖检测器时基，使分频/检测与超采样率一致
     rebuildOversamplersIfNeeded();
 
+    // 超采样工作缓冲：2 通道 ×（最大块长 × 8），保证 8x 升频时有足够容量
+    const int osCap = samplesPerBlock * 8;
+    chainF.osBuf.setSize (2, osCap, false, false, true);
+    chainD.osBuf.setSize (2, osCap, false, false, true);
+
     scratchF.setSize (2, samplesPerBlock, false, false, true);
     scratchD.setSize (2, samplesPerBlock, false, false, true);
 }
@@ -118,20 +122,18 @@ void HanChiAudioProcessor::rebuildOversamplersIfNeeded()
 {
     const int comboIdx = (int) apvts.getRawParameterValue (pOs)->load(); // 0..3 -> 1x,2x,4x,8x
     const size_t factor = (size_t) 1 << juce::jlimit (0, 3, comboIdx);
-    const int chs = juce::jmax (1, currentNumChannels);
 
-    // 仅在「因子或通道数确实变化」时才重建，避免每 block 重分配
+    // 仅在「倍率确实变化 / 脏标记」时重建，避免每 block 重分配
     if (! oversamplerDirty.exchange (false)
         && chainF.overs != nullptr && chainD.overs != nullptr
-        && (int) oversamplerFactor.load() == (int) factor
-        && builtChannelCount == chs)
+        && (int) oversamplerFactor.load() == (int) factor)
         return;
 
-    // 关键修复：超采样器必须按「当前主总线实际通道数」构建，
-    // 否则单声道/非 2 通道宿主下 processSamplesUp/Down 通道不匹配 -> 2/4/8x 无声。
-    chainF.overs = std::make_unique<juce::dsp::Oversampling<float>> ((size_t) chs, factor,
+    // 固定按 2 通道（立体声）构建，与 osBuf 通道数严格一致，
+    // processSamplesUp/Down 通道匹配，杜绝 2/4/8x 静音。
+    chainF.overs = std::make_unique<juce::dsp::Oversampling<float>> (2, factor,
                    juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-    chainD.overs = std::make_unique<juce::dsp::Oversampling<double>> ((size_t) chs, factor,
+    chainD.overs = std::make_unique<juce::dsp::Oversampling<double>> (2, factor,
                    juce::dsp::Oversampling<double>::filterHalfBandPolyphaseIIR, true);
 
     chainF.overs->initProcessing ((size_t) currentBlockSize);
@@ -139,8 +141,7 @@ void HanChiAudioProcessor::rebuildOversamplersIfNeeded()
     chainF.overs->reset();
     chainD.overs->reset();
 
-    oversamplerFactor  = (int) factor;
-    builtChannelCount  = chs;
+    oversamplerFactor = (int) factor;
 
     // 在超采样率上重设检测器时间常数（与分频器保持一致，频率/时基才正确）
     prepareDetectors (currentSampleRate * (double) factor);
@@ -254,8 +255,11 @@ void HanChiAudioProcessor::processInternal (juce::AudioBuffer<T>& buffer)
 template <typename T>
 void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buffer)
 {
-    const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
-    const double fsFactor = (double) oversamplerFactor.load();
+    const int numCh = juce::jmin (buffer.getNumChannels(), 2);
+    const int n     = buffer.getNumSamples();
+    if (numCh <= 0 || n <= 0) return;
+
+    const int factor = juce::jmax (1, (int) oversamplerFactor.load());
 
     const bool splitMode  = apvts.getRawParameterValue (pMode)->load() > 0.5f;
     const bool lowEn      = apvts.getRawParameterValue (pLowEn)->load() > 0.5f;
@@ -269,8 +273,8 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
     const bool lowSolo    = apvts.getRawParameterValue (pLowSolo)->load() > 0.5f;
     const bool highSolo   = apvts.getRawParameterValue (pHighSolo)->load() > 0.5f;
     // 前瞻按超采样率换算，听感上的延迟时间保持一致
-    const int lookSamples = (int) std::round (apvts.getRawParameterValue (pLookahead)->load()
-                                              * 0.001 * currentSampleRate * fsFactor);
+    const int lookSamples = (int) std::round ((double) apvts.getRawParameterValue (pLookahead)->load()
+                                              * 0.001 * currentSampleRate * (double) factor);
 
     // 前瞻延迟线尺寸（低 / 中 / 高三段一致，保证求和相位对齐）
     for (int ch = 0; ch < 2; ++ch)
@@ -280,20 +284,32 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
         c.dHigh[ch].setSize (lookSamples);
     }
 
-    // 超采样：升频
+    // 超采样仅在「倍率>1 且缓冲区容量足够」时启用；否则回退到直接处理（绝不静音）
+    const bool useOS = (factor > 1) && (c.overs != nullptr)
+                       && (n <= currentBlockSize)
+                       && ((long long) n * (long long) factor <= (long long) c.osBuf.getNumSamples());
+
     T* chPtr[2] { nullptr, nullptr };
     int chunk = 0;
-    if (fsFactor > 1.0 && c.overs != nullptr)
+    juce::dsp::AudioBlock<T> osUpBlock;   // 升频后的 block（降频时复用，长度 = n*factor）
+
+    if (useOS)
     {
-        auto up = c.overs->processSamplesUp (juce::dsp::AudioBlock<T> (buffer));
-        chunk = (int) up.getNumSamples();
-        for (int ch = 0; ch < numChannels; ++ch)
-            chPtr[ch] = up.getChannelPointer (ch);
+        c.osBuf.clear();
+        for (int ch = 0; ch < numCh; ++ch)
+            c.osBuf.copyFrom (ch, 0, buffer, ch, 0, n);
+
+        auto fullBlock = juce::dsp::AudioBlock<T> (c.osBuf);
+        auto inBlock   = fullBlock.getSubBlock (0, (size_t) n);
+        osUpBlock      = c.overs->processSamplesUp (inBlock);   // 就地升频，长度变为 n*factor
+        chunk = (int) osUpBlock.getNumSamples();
+        for (int ch = 0; ch < numCh; ++ch)
+            chPtr[ch] = osUpBlock.getChannelPointer (ch);
     }
     else
     {
-        chunk = buffer.getNumSamples();
-        for (int ch = 0; ch < numChannels; ++ch)
+        chunk = n;
+        for (int ch = 0; ch < numCh; ++ch)
             chPtr[ch] = buffer.getWritePointer (ch);
     }
 
@@ -301,7 +317,7 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
 
     for (int i = 0; i < chunk; ++i)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < numCh; ++ch)
         {
             const T in = chPtr[ch][i];
 
@@ -352,11 +368,12 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
         }
     }
 
-    // 超采样：降频
-    if (fsFactor > 1.0 && c.overs != nullptr)
+    if (useOS)
     {
-        auto outBlock = juce::dsp::AudioBlock<T> (buffer);
-        c.overs->processSamplesDown (outBlock);
+        // 就地降频：结果写回 osBuf 的前 n 个样本
+        c.overs->processSamplesDown (osUpBlock);
+        for (int ch = 0; ch < numCh; ++ch)
+            buffer.copyFrom (ch, 0, c.osBuf, ch, 0, n);
     }
 
     grLowDb  = grMidMin;
