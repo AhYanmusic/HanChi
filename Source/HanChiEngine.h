@@ -455,7 +455,18 @@ public:
             juce::dsp::AudioBlock<const T> constIn (inBlock);
             auto up = os[osIdx]->processSamplesUp (constIn);
 
-            chunk  = juce::jmin ((int) up.getNumSamples(), osBuf.getNumSamples());
+            // The processing length is EXACTLY nSafe * factor - the number of
+            // samples the oversampler produced. Never derive it from the work
+            // buffer capacity: osBuf is intentionally over-allocated, and using
+            // that larger size here writes past the end of the oversampler's
+            // internal buffer, corrupting neighbouring filter state every
+            // block (which silently wrecks the crossover response).
+            const int want = nSafe * factor;
+
+            if (up.getNumSamples() < (size_t) want)
+                return;   // defensive: the output is left untouched -> safe
+
+            chunk  = want;
             ptr[0] = up.getChannelPointer (0);
             ptr[1] = up.getChannelPointer (1);
         }
