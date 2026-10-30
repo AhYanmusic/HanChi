@@ -138,6 +138,49 @@ hanchi::Params deessParams (int factor)
     return p;
 }
 
+// Direct measurement of the crossover filters at each oversampled rate.
+// This tells us whether the band split itself survives the higher sample rate.
+void testCrossoverResponse()
+{
+    std::cout << "\n[crossover response] 8 kHz tone, mid band = HP(6k) -> LP(9.5k)\n";
+
+    const int factors[4] = { 1, 2, 4, 8 };
+
+    for (int f : factors)
+    {
+        const double fs   = 48000.0 * (double) f;
+        const double amp  = 0.5;
+        const int    total = (int) fs;          // one second at the oversampled rate
+        const int    skip  = total / 2;
+
+        hanchi::Biquad<double> hp, lp;
+        hp.set (fs, 6000.0, false);
+        lp.set (fs, 9500.0, true);
+
+        double sumSq = 0.0;
+        int    count = 0;
+
+        for (int i = 0; i < total; ++i)
+        {
+            const double t = (double) i / fs;
+            const double x = amp * std::sin (2.0 * kPi * 8000.0 * t);
+            const double y = lp.processSample (hp.processSample (x));
+
+            if (i >= skip)
+            {
+                sumSq += y * y;
+                ++count;
+            }
+        }
+
+        const double rms = std::sqrt (sumSq / (double) count);
+        const double db  = toDb (rms / referenceRms (amp));
+
+        std::cout << "  " << f << "x (fsOs=" << (int) fs << "): mid band gain at 8 kHz = "
+                  << db << " dB\n";
+    }
+}
+
 template <typename T>
 void testPrecision (const std::string& label, double fs, int blockSize)
 {
@@ -194,7 +237,9 @@ void testPrecision (const std::string& label, double fs, int blockSize)
         const double db    = toDb (ratio);
 
         check (db < -1.0 && db > -60.0, name,
-               std::to_string (db) + " dB (must be between -3 and -60 dB)");
+               std::to_string (db) + " dB (must be between -1 and -60 dB)");
+        std::cout << "         engine GR: low " << eng.getGrLowDb()
+                  << " dB, high " << eng.getGrHighDb() << " dB\n";
     }
 
     // ---- 3. silence in, silence out --------------------------------------
@@ -313,6 +358,8 @@ int main()
 {
     std::cout << "HanChi DSP self-test\n";
     std::cout << "====================\n";
+
+    testCrossoverResponse();
 
     testPrecision<float>  ("32-bit float", 48000.0, 512);
     testPrecision<double> ("64-bit float", 48000.0, 512);
