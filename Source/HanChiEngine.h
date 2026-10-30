@@ -58,30 +58,110 @@ struct Params
 };
 
 // ============================================================================
-//  Two cascaded Butterworth sections (Q = 0.7071) = Linkwitz-Riley 4th order
+//  Topology-preserving-transform state variable filter (TPT SVF), 2nd order.
+//
+//  Chosen over a direct-form biquad on purpose: at 8x oversampling the 6 kHz
+//  crossover point sits at fc/fs = 0.0156, where direct-form coefficients
+//  lose accuracy and the phase response (which the band-summing relies on)
+//  drifts. The TPT structure stays well conditioned at any fc/fs ratio, which
+//  is why every top-tier dynamic EQ / de-esser uses it.
+//
+//  One instance produces the lowpass AND the highpass output from the same
+//  state, so the two paths are phase coherent - another requirement for the
+//  crossover to sum back to the original signal.
 // ============================================================================
 template <typename T>
-struct Biquad
+struct TptSvf
 {
-    std::array<juce::dsp::IIR::Filter<T>, 2> stages;
+    double a1 = 0.0, a2 = 0.0, a3 = 0.0, k = 0.0;
+    T ic1 = T (0), ic2 = T (0);
 
-    void set (double fs, double fc, bool isLowPass)
+    void set (double fs, double fc, double q)
     {
-        using C = juce::dsp::IIR::Coefficients<T>;
-        const double f = juce::jlimit (20.0, fs * 0.45, fc);
+        const double f = juce::jlimit (10.0, fs * 0.45, fc);
+        const double g = std::tan (3.14159265358979323846 * f / fs);
 
-        for (auto& s : stages)
-        {
-            s.coefficients = isLowPass ? C::makeLowPass  (fs, f, T (0.7071067811865476))
-                                       : C::makeHighPass (fs, f, T (0.7071067811865476));
-            s.reset();
-        }
+        k  = 1.0 / juce::jmax (0.05, q);
+        a1 = 1.0 / (1.0 + g * (g + k));
+        a2 = g * a1;
+        a3 = g * a2;
     }
 
-    T processSample (T in)
+    void reset() { ic1 = T (0); ic2 = T (0); }
+
+    /** Returns the lowpass output and writes the highpass output to hpOut. */
+    T process (T v0, T& hpOut)
     {
-        in = stages[0].processSample (in);
-        return stages[1].processSample (in);
+        const T v3 = v0 - ic2;
+        const T v1 = (T) (a1 * (double) ic1 + a2 * (double) v3);
+        const T v2 = (T) ((double) ic2 + a2 * (double) ic1 + a3 * (double) v3);
+
+        ic1 = (T) (2.0 * (double) v1) - ic1;
+        ic2 = (T) (2.0 * (double) v2) - ic2;
+
+        hpOut = v0 - (T) (k * (double) v1) - v2;
+        return v2;
+    }
+
+    T processLP (T v0) { T hp; return process (v0, hp); }
+    T processHP (T v0) { T hp; process (v0, hp); return hp; }
+};
+
+// ============================================================================
+//  Linkwitz-Riley 3-way crossover tree.
+//
+//      low  = LP4(f1)
+//      mid  = HP4(f1) -> LP4(f2)
+//      high = HP4(f1) -> HP4(f2)
+//
+//  Because LP4(f1) + HP4(f1) = 1 and LP4(f2) + HP4(f2) = 1, the three bands
+//  sum exactly back to the input:
+//
+//      low + mid + high = LP4(f1) + HP4(f1) * (LP4(f2) + HP4(f2))
+//                       = LP4(f1) + HP4(f1)
+//                       = 1
+//
+//  Feeding "high" from HP4(f2) alone (as an earlier revision did) leaves a
+//  residual term and lets un-attenuated energy leak through, which is exactly
+//  how a de-esser ends up doing nothing while still showing gain reduction.
+// ============================================================================
+template <typename T>
+struct Crossover
+{
+    static constexpr double q = 0.7071067811865476;   // Butterworth 2nd order
+
+    TptSvf<T> s1, s1b, s1c;   // first split, at f1
+    TptSvf<T> s2, s2b, s2c;   // second split, at f2
+
+    void set (double fs, double f1, double f2)
+    {
+        s1.set (fs, f1, q);  s1b.set (fs, f1, q);  s1c.set (fs, f1, q);
+        s2.set (fs, f2, q);  s2b.set (fs, f2, q);  s2c.set (fs, f2, q);
+    }
+
+    void reset()
+    {
+        s1.reset(); s1b.reset(); s1c.reset();
+        s2.reset(); s2b.reset(); s2c.reset();
+    }
+
+    struct Out { T low, mid, high; };
+
+    Out process (T in)
+    {
+        T hp1;
+        const T lp1 = s1.process (in, hp1);          // LP2(f1) / HP2(f1)
+
+        const T low  = s1b.processLP (lp1);          // LP4(f1)
+        const T bBand = s1c.processHP (hp1);         // HP4(f1)
+
+        T hp2;
+        const T lp2 = s2.process (bBand, hp2);       // LP2(f2) / HP2(f2)
+
+        const T mid  = s2b.processLP (lp2);          // LP4(f2) applied to HP4(f1)
+        const T high = s2c.processHP (hp2);          // HP4(f2) applied to HP4(f1)
+
+        return { low, mid, high };
     }
 };
 
@@ -254,6 +334,7 @@ public:
             for (int b = 0; b < 3; ++b)
                 lookDelay[ch][b].reset();
 
+            xover[ch].reset();
             trim[ch].reset();
 
             detLow[ch].reset();
@@ -369,10 +450,10 @@ public:
                 const T in = ptr[ch][i];
 
                 // ---- band split (filters run on the un-delayed signal) ----
-                const T low  = lowLP[ch].processSample (in);
-                const T midH = midHP[ch].processSample (in);
-                const T mid  = midLP[ch].processSample (midH);
-                const T high = highHP[ch].processSample (in);
+                const auto bands = xover[ch].process (in);
+                const T low  = bands.low;
+                const T mid  = bands.mid;
+                const T high = bands.high;
 
                 T out;
 
@@ -520,12 +601,7 @@ private:
             const double hi  = juce::jlimit (lo + 200.0, nyq, p.highFreq);
 
             for (int ch = 0; ch < 2; ++ch)
-            {
-                lowLP[ch].set  (fsOs, lo, true);
-                midHP[ch].set  (fsOs, lo, false);
-                midLP[ch].set  (fsOs, hi, true);
-                highHP[ch].set (fsOs, hi, false);
-            }
+                xover[ch].set (fsOs, lo, hi);
 
             lastFactor  = factor;
             lastLowF    = p.lowFreq;
@@ -547,7 +623,7 @@ private:
     int fixedLatency = 0;
     int trimMax      = 0;
 
-    Biquad<T> lowLP[2], midHP[2], midLP[2], highHP[2];
+    Crossover<T> xover[2];
 
     VarDelay<T> lookDelay[2][3];   // low / mid / high, per channel
     VarDelay<T> trim[2];
