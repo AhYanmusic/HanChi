@@ -302,6 +302,9 @@ void testPrecision (const std::string& label, double fs, int blockSize)
                       << " dB, |high| " << toDb (std::sqrt (d.highSq / nn) / referenceRms (amp))
                       << " dB, |out| " << toDb (std::sqrt (d.outSq  / nn) / referenceRms (amp))
                       << " dB\n";
+            std::cout << "         xover: fs=" << eng.debugSetFs()
+                      << " f1=" << eng.debugSetF1() << " f2=" << eng.debugSetF2()
+                      << " g1=" << eng.debugG1() << " g2=" << eng.debugG2() << "\n";
             std::cout << "         gLow range [" << d.gLowMin << " .. " << d.gLowMax
                       << "], gHigh range [" << d.gHighMin << " .. " << d.gHighMax
                       << "], samples " << d.n << "\n";
