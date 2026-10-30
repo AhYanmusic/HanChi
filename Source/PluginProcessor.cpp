@@ -114,6 +114,10 @@ void HanChiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     chainF.osBuf.setSize (2, osCap, false, false, true);
     chainD.osBuf.setSize (2, osCap, false, false, true);
 
+    // 输入备份缓冲（防静音兜底）
+    chainF.inBackup.setSize (2, samplesPerBlock, false, false, true);
+    chainD.inBackup.setSize (2, samplesPerBlock, false, false, true);
+
     scratchF.setSize (2, samplesPerBlock, false, false, true);
     scratchD.setSize (2, samplesPerBlock, false, false, true);
 }
@@ -259,6 +263,20 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
     const int n     = buffer.getNumSamples();
     if (numCh <= 0 || n <= 0) return;
 
+    // ---- 防静音兜底：先备份原始输入并统计能量（此时 buffer 尚未被处理） ----
+    const bool canGuard = (n <= c.inBackup.getNumSamples());
+    double inEnergy = 0.0;
+    if (canGuard)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            c.inBackup.copyFrom (ch, 0, buffer, ch, 0, n);
+            const T* src = buffer.getReadPointer (ch);
+            for (int i = 0; i < n; ++i)
+                inEnergy += (double) std::abs (src[i]);
+        }
+    }
+
     const int factor = juce::jmax (1, (int) oversamplerFactor.load());
 
     const bool splitMode  = apvts.getRawParameterValue (pMode)->load() > 0.5f;
@@ -374,6 +392,29 @@ void HanChiAudioProcessor::processChain (Chain<T>& c, juce::AudioBuffer<T>& buff
         c.overs->processSamplesDown (osUpBlock);
         for (int ch = 0; ch < numCh; ++ch)
             buffer.copyFrom (ch, 0, c.osBuf, ch, 0, n);
+    }
+
+    // ---- 防静音兜底：若输出为全零 / NaN 而输入确实有声，则恢复为原始输入（直通） ----
+    // 正常情况下永不触发；仅在底层处理出现异常时兜底，保证「只要输入有声，输出绝不静音」。
+    if (canGuard && inEnergy > 1e-6)
+    {
+        double outEnergy = 0.0;
+        bool   bad = false;
+
+        for (int ch = 0; ch < numCh && ! bad; ++ch)
+        {
+            const T* src = buffer.getReadPointer (ch);
+            for (int i = 0; i < n; ++i)
+            {
+                const double v = (double) src[i];
+                if (! std::isfinite (v)) { bad = true; break; }
+                outEnergy += std::abs (v);
+            }
+        }
+
+        if (bad || outEnergy < 1e-9)
+            for (int ch = 0; ch < numCh; ++ch)
+                buffer.copyFrom (ch, 0, c.inBackup, ch, 0, n);
     }
 
     grLowDb  = grMidMin;
