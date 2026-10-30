@@ -76,10 +76,15 @@ struct TptSvf
     double a1 = 0.0, a2 = 0.0, a3 = 0.0, k = 0.0;
     T ic1 = T (0), ic2 = T (0);
 
+    // retained for diagnostics
+    double designFs = 0.0, designFc = 0.0, gCoef = 0.0;
+
     void set (double fs, double fc, double q)
     {
         const double f = juce::jlimit (10.0, fs * 0.45, fc);
         const double g = std::tan (3.14159265358979323846 * f / fs);
+
+        designFs = fs; designFc = f; gCoef = g;
 
         k  = 1.0 / juce::jmax (0.05, q);
         a1 = 1.0 / (1.0 + g * (g + k));
@@ -135,8 +140,11 @@ struct Crossover
     TptSvf<T> l1a, l1b;   // LP4 at f1
     TptSvf<T> l2a, l2b;   // LP4 at f2
 
+    double setFs = 0.0, setF1 = 0.0, setF2 = 0.0;
+
     void set (double fs, double f1, double f2)
     {
+        setFs = fs; setF1 = f1; setF2 = f2;
         l1a.set (fs, f1, q);  l1b.set (fs, f1, q);
         l2a.set (fs, f2, q);  l2b.set (fs, f2, q);
     }
@@ -370,6 +378,13 @@ public:
 
     float getGrLowDb()  const noexcept { return grLowDb; }
     float getGrHighDb() const noexcept { return grHighDb; }
+
+    // diagnostics
+    double debugSetFs() const noexcept { return xover[0].setFs; }
+    double debugSetF1() const noexcept { return xover[0].setF1; }
+    double debugSetF2() const noexcept { return xover[0].setF2; }
+    double debugG1()    const noexcept { return xover[0].l1a.gCoef; }
+    double debugG2()    const noexcept { return xover[0].l2a.gCoef; }
 
     // ---------------------------------------------------------------- process
     void process (juce::AudioBuffer<T>& buffer, const Params& p)
