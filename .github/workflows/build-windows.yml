@@ -50,6 +50,24 @@ jobs:
             exit 1
           }
 
+      - name: Run DSP self-test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path build -Recurse -Filter "HanChiSelfTest.exe" |
+                 Select-Object -First 1
+          if ($null -eq $exe) {
+            Write-Host "::error::SELFTEST BINARY NOT FOUND"
+            exit 1
+          }
+          Write-Host "Running $($exe.FullName)"
+          & $exe.FullName 2>&1 | Tee-Object -FilePath selftest.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $tail = (Get-Content selftest.log -Tail 60) -join "%0A"
+            Write-Host "::error::DSP SELF-TEST FAILED:%0A$tail"
+            exit 1
+          }
+
       - name: Stage VST3
         shell: pwsh
         run: |
