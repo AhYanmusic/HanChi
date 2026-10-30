@@ -138,46 +138,55 @@ hanchi::Params deessParams (int factor)
     return p;
 }
 
-// Direct measurement of the crossover filters at each oversampled rate.
-// This tells us whether the band split itself survives the higher sample rate.
+// Direct measurement of the crossover tree at each oversampled rate.
+// The three bands must sum back to the input (0 dB) - that is the property
+// that makes the de-esser actually reduce level instead of leaking it through
+// an un-attenuated band.
 void testCrossoverResponse()
 {
-    std::cout << "\n[crossover response] 8 kHz tone, mid band = HP(6k) -> LP(9.5k)\n";
+    std::cout << "\n[crossover tree] 8 kHz tone  |  LP4(6k) / HP4(6k)*LP4(9.5k) / HP4(6k)*HP4(9.5k)\n";
 
     const int factors[4] = { 1, 2, 4, 8 };
 
     for (int f : factors)
     {
-        const double fs   = 48000.0 * (double) f;
-        const double amp  = 0.5;
+        const double fs    = 48000.0 * (double) f;
+        const double amp   = 0.5;
         const int    total = (int) fs;          // one second at the oversampled rate
         const int    skip  = total / 2;
 
-        hanchi::Biquad<double> hp, lp;
-        hp.set (fs, 6000.0, false);
-        lp.set (fs, 9500.0, true);
+        hanchi::Crossover<double> x;
+        x.set (fs, 6000.0, 9500.0);
 
-        double sumSq = 0.0;
+        double sLow = 0.0, sMid = 0.0, sHigh = 0.0, sSum = 0.0;
         int    count = 0;
 
         for (int i = 0; i < total; ++i)
         {
-            const double t = (double) i / fs;
-            const double x = amp * std::sin (2.0 * kPi * 8000.0 * t);
-            const double y = lp.processSample (hp.processSample (x));
+            const double t  = (double) i / fs;
+            const double in = amp * std::sin (2.0 * kPi * 8000.0 * t);
+            const auto   o  = x.process (in);
 
             if (i >= skip)
             {
-                sumSq += y * y;
+                sLow  += (double) o.low  * (double) o.low;
+                sMid  += (double) o.mid  * (double) o.mid;
+                sHigh += (double) o.high * (double) o.high;
+
+                const double sum = (double) o.low + (double) o.mid + (double) o.high;
+                sSum += sum * sum;
                 ++count;
             }
         }
 
-        const double rms = std::sqrt (sumSq / (double) count);
-        const double db  = toDb (rms / referenceRms (amp));
+        const double ref = referenceRms (amp);
+        const double n   = (double) count;
 
-        std::cout << "  " << f << "x (fsOs=" << (int) fs << "): mid band gain at 8 kHz = "
-                  << db << " dB\n";
+        std::cout << "  " << f << "x (fsOs=" << (int) fs << "): low "
+                  << toDb (std::sqrt (sLow  / n) / ref) << " dB, mid "
+                  << toDb (std::sqrt (sMid  / n) / ref) << " dB, high "
+                  << toDb (std::sqrt (sHigh / n) / ref) << " dB, SUM "
+                  << toDb (std::sqrt (sSum  / n) / ref) << " dB\n";
     }
 }
 
@@ -214,6 +223,48 @@ void testPrecision (const std::string& label, double fs, int blockSize)
 
         check (std::abs (db) < 0.1, name,
                std::to_string (db) + " dB vs input (must be within +/-0.1 dB)");
+    }
+
+    // ---- 1b. split mode must rebuild the input when not compressing -----
+    // This is the gold test for the crossover: if the three bands do not sum
+    // back to the input, un-attenuated energy leaks past the de-esser.
+    for (int f : factors)
+    {
+        for (double freq : { 1000.0, 3000.0, 8000.0, 12000.0 })
+        {
+            hanchi::Engine<T> eng;
+            eng.prepare (fs, blockSize);
+
+            hanchi::Params p;
+            p.splitMode = true;
+            p.lowEn     = true;
+            p.highEn    = true;
+            p.lowFreq   = 6000.0;
+            p.highFreq  = 9500.0;
+            p.lowThr    = 20.0;      // never reached by a -6 dBFS tone
+            p.highThr   = 20.0;
+            p.lowStr    = 0.0;
+            p.highStr   = 0.0;
+            p.lookMs    = 0.0;
+            p.osFactor  = f;
+
+            const double out = runStream<T> (eng, p, freq, amp,
+                                             fs, blockSize, numBlocks, skipBlocks);
+
+            const std::string name = "split rebuild, " + std::to_string ((int) freq)
+                                   + " Hz, " + std::to_string (f) + "x";
+
+            if (out < 0.0)
+            {
+                check (false, name, "non-finite sample");
+                continue;
+            }
+
+            const double db = toDb (out / referenceRms (amp));
+
+            check (std::abs (db) < 0.3, name,
+                   std::to_string (db) + " dB vs input (must be within +/-0.3 dB)");
+        }
     }
 
     // ---- 2. de-essing must actually work, and must not mute -------------
