@@ -144,7 +144,7 @@ hanchi::Params deessParams (int factor)
 // an un-attenuated band.
 void testCrossoverResponse()
 {
-    std::cout << "\n[crossover tree] 8 kHz tone  |  LP4(6k) / HP4(6k)*LP4(9.5k) / HP4(6k)*HP4(9.5k)\n";
+    std::cout << "\n[crossover tree] 8 kHz tone  |  LP4(6k) / LP4(9.5k)-LP4(6k) / in-LP4(9.5k)   [SUM must be 0 dB]\n";
 
     const int factors[4] = { 1, 2, 4, 8 };
 
