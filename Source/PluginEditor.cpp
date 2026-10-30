@@ -127,7 +127,7 @@ void HanChiAudioProcessorEditor::timerCallback()
 void HanChiAudioProcessorEditor::refreshTemplateList (const juce::String& selectName)
 {
     templateBox.clear (juce::dontSendNotification);
-    templateBox.addItem ("— Select Preset —", 1);
+    templateBox.addItem ("- Select Preset -", 1);
     int id = 2;
     for (const auto& n : HanChiAudioProcessor::getBuiltinTemplateNames())
         templateBox.addItem (n, id++);
@@ -151,7 +151,7 @@ void HanChiAudioProcessorEditor::refreshTemplateList (const juce::String& select
 void HanChiAudioProcessorEditor::applySelectedTemplate()
 {
     const auto name = templateBox.getText();
-    if (name.isEmpty() || name == "— Select Preset —") return;
+    if (name.isEmpty() || name == "- Select Preset -") return;
 
     if (HanChiAudioProcessor::getBuiltinTemplateNames().contains (name))
         processor.applyBuiltinTemplate (name);
@@ -186,7 +186,7 @@ void HanChiAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (0xffe8e2d6));
     g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
-    g.drawText ("HanChi  ·  Chinese Vocal De-Esser", getLocalBounds().removeFromTop (44),
+    g.drawText ("HanChi - Chinese Vocal De-Esser", getLocalBounds().removeFromTop (44),
                 juce::Justification::centred);
 
     g.setFont (juce::FontOptions (13.0f));
