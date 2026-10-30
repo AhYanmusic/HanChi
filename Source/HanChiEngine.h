@@ -108,58 +108,54 @@ struct TptSvf
 };
 
 // ============================================================================
-//  Linkwitz-Riley 3-way crossover tree.
+//  3-way crossover built from complementary lowpass differences.
 //
 //      low  = LP4(f1)
-//      mid  = HP4(f1) -> LP4(f2)
-//      high = HP4(f1) -> HP4(f2)
+//      mid  = LP4(f2) - LP4(f1)
+//      high = in - LP4(f2)
 //
-//  Because LP4(f1) + HP4(f1) = 1 and LP4(f2) + HP4(f2) = 1, the three bands
-//  sum exactly back to the input:
+//  Sum:  low + mid + high = LP4(f1) + LP4(f2) - LP4(f1) + in - LP4(f2) = in
 //
-//      low + mid + high = LP4(f1) + HP4(f1) * (LP4(f2) + HP4(f2))
-//                       = LP4(f1) + HP4(f1)
-//                       = 1
+//  This is an IDENTICAL reconstruction - sample for sample, at any sample rate,
+//  with any filter - unlike a serial Linkwitz-Riley tree. In a serial tree the
+//  second split contributes an allpass rather than an identity, so the bands do
+//  not sum back and, worse, "mid + high" ends up roughly 75 degrees away from
+//  the input. Subtracting a vector at that angle barely changes the magnitude,
+//  which is how a de-esser shows 20 dB of gain reduction yet changes nothing.
 //
-//  Feeding "high" from HP4(f2) alone (as an earlier revision did) leaves a
-//  residual term and lets un-attenuated energy leak through, which is exactly
-//  how a de-esser ends up doing nothing while still showing gain reduction.
+//  With this structure:   out = g * in + (1 - g) * low
+//  Since "low" is heavily attenuated up in the sibilance region, the reduction
+//  always lands, and zero gain reduction is a bit-exact bypass.
 // ============================================================================
 template <typename T>
 struct Crossover
 {
     static constexpr double q = 0.7071067811865476;   // Butterworth 2nd order
 
-    TptSvf<T> s1, s1b, s1c;   // first split, at f1
-    TptSvf<T> s2, s2b, s2c;   // second split, at f2
+    TptSvf<T> l1a, l1b;   // LP4 at f1
+    TptSvf<T> l2a, l2b;   // LP4 at f2
 
     void set (double fs, double f1, double f2)
     {
-        s1.set (fs, f1, q);  s1b.set (fs, f1, q);  s1c.set (fs, f1, q);
-        s2.set (fs, f2, q);  s2b.set (fs, f2, q);  s2c.set (fs, f2, q);
+        l1a.set (fs, f1, q);  l1b.set (fs, f1, q);
+        l2a.set (fs, f2, q);  l2b.set (fs, f2, q);
     }
 
     void reset()
     {
-        s1.reset(); s1b.reset(); s1c.reset();
-        s2.reset(); s2b.reset(); s2c.reset();
+        l1a.reset(); l1b.reset();
+        l2a.reset(); l2b.reset();
     }
 
     struct Out { T low, mid, high; };
 
     Out process (T in)
     {
-        T hp1;
-        const T lp1 = s1.process (in, hp1);          // LP2(f1) / HP2(f1)
+        const T low = l1b.processLP (l1a.processLP (in));   // LP4(f1)
+        const T lp2 = l2b.processLP (l2a.processLP (in));   // LP4(f2)
 
-        const T low  = s1b.processLP (lp1);          // LP4(f1)
-        const T bBand = s1c.processHP (hp1);         // HP4(f1)
-
-        T hp2;
-        const T lp2 = s2.process (bBand, hp2);       // LP2(f2) / HP2(f2)
-
-        const T mid  = s2b.processLP (lp2);          // LP4(f2) applied to HP4(f1)
-        const T high = s2c.processHP (hp2);          // HP4(f2) applied to HP4(f1)
+        const T mid  = lp2 - low;       // band between f1 and f2
+        const T high = in - lp2;        // everything above f2
 
         return { low, mid, high };
     }
