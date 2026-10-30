@@ -271,6 +271,9 @@ struct VarDelay
 struct Diagnostics
 {
     double inSq = 0.0, lowSq = 0.0, midSq = 0.0, highSq = 0.0, outSq = 0.0;
+    double lowRawSq = 0.0;          // low BEFORE the lookahead delay
+    long long zeroCross = 0;        // sign changes of the upsampled signal
+    int lastSign = 0;
     double gLowMin = 1.0, gLowMax = 0.0;
     double gHighMin = 1.0, gHighMax = 0.0;
     long long n = 0;
@@ -550,6 +553,13 @@ public:
 
                         if (p.lowEn)   out -= (T (1) - gLow)  * dMid;
                         if (p.highEn)  out -= (T (1) - gHigh) * dHigh;
+
+                        diag.lowRawSq += (double) low * (double) low;
+
+                        const int sign = (in > T (0)) ? 1 : -1;
+                        if (diag.lastSign != 0 && sign != diag.lastSign)
+                            ++diag.zeroCross;
+                        diag.lastSign = sign;
 
                         diag.inSq   += (double) dIn   * (double) dIn;
                         diag.lowSq  += (double) dLow  * (double) dLow;
