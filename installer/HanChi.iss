@@ -2,7 +2,7 @@
 ; Compiled automatically by ISCC.exe on GitHub Actions
 
 #define MyAppName "HanChi"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "A-Yan Studio"
 
 [Setup]
