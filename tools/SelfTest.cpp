@@ -291,6 +291,21 @@ void testPrecision (const std::string& label, double fs, int blockSize)
                std::to_string (db) + " dB (must be between -1 and -60 dB)");
         std::cout << "         engine GR: low " << eng.getGrLowDb()
                   << " dB, high " << eng.getGrHighDb() << " dB\n";
+
+        const auto& d = eng.diag;
+        if (d.n > 0)
+        {
+            const double nn = (double) d.n;
+            std::cout << "         |in| "   << toDb (std::sqrt (d.inSq   / nn) / referenceRms (amp))
+                      << " dB, |low| " << toDb (std::sqrt (d.lowSq  / nn) / referenceRms (amp))
+                      << " dB, |mid| " << toDb (std::sqrt (d.midSq  / nn) / referenceRms (amp))
+                      << " dB, |high| " << toDb (std::sqrt (d.highSq / nn) / referenceRms (amp))
+                      << " dB, |out| " << toDb (std::sqrt (d.outSq  / nn) / referenceRms (amp))
+                      << " dB\n";
+            std::cout << "         gLow range [" << d.gLowMin << " .. " << d.gLowMax
+                      << "], gHigh range [" << d.gHighMin << " .. " << d.gHighMax
+                      << "], samples " << d.n << "\n";
+        }
     }
 
     // ---- 3. silence in, silence out --------------------------------------
