@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(HanChi VERSION 1.4.1 LANGUAGES C CXX)
+project(HanChi VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,5 +58,33 @@ target_link_libraries(HanChi
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# ---- DSP self-test: runs the shipping engine offline and verifies that ----
+# ---- audio actually passes through at every oversampling factor.        ----
+juce_add_console_app(HanChiSelfTest PRODUCT_NAME "HanChi Self Test")
+
+target_sources(HanChiSelfTest PRIVATE
+    tools/SelfTest.cpp
+)
+
+target_compile_definitions(HanChiSelfTest PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+if (MSVC)
+    target_compile_options(HanChiSelfTest PRIVATE /utf-8)
+endif()
+
+target_link_libraries(HanChiSelfTest
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_dsp
+        juce::juce_core
+    PUBLIC
+        juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
