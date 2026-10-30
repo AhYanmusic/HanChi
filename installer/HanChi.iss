@@ -1,8 +1,8 @@
-; HanChi 汉齿 VST3 安装器（Inno Setup 6）
-; 由 GitHub Actions 云端自动调用 ISCC.exe 编译
+; HanChi VST3 installer (Inno Setup 6)
+; Compiled automatically by ISCC.exe on GitHub Actions
 
-#define MyAppName "HanChi 汉齿"
-#define MyAppVersion "1.1.0"
+#define MyAppName "HanChi"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "A-Yan Studio"
 
 [Setup]
@@ -21,7 +21,7 @@ PrivilegesRequired=admin
 WizardStyle=modern
 
 [Files]
-; 构建产物 HanChi.vst3（文件夹）需先由工作流复制到 installer\payload\ 下
+; The built HanChi.vst3 bundle must be copied to installer\payload\ by the workflow first
 Source: "payload\HanChi.vst3\*"; DestDir: "{code:GetDefaultDir}\HanChi.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Code]
