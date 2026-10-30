@@ -302,6 +302,14 @@ void testPrecision (const std::string& label, double fs, int blockSize)
                       << " dB, |high| " << toDb (std::sqrt (d.highSq / nn) / referenceRms (amp))
                       << " dB, |out| " << toDb (std::sqrt (d.outSq  / nn) / referenceRms (amp))
                       << " dB\n";
+            {
+                std::string w;
+                for (int k = 0; k < 24; ++k)
+                    w += (k ? " " : "") + std::to_string (d.first[k]).substr (0, 7);
+                std::cout << "         first 24 samples: " << w << "\n";
+            }
+            std::cout << "         diffRms/inRms = "
+                      << (std::sqrt (d.diffSq / nn) / std::sqrt (d.inSq / nn)) << "\n";
             std::cout << "         |low raw| (pre-delay) "
                       << toDb (std::sqrt (d.lowRawSq / nn) / referenceRms (amp)) << " dB"
                       << ", upsampled freq ~ " << (0.5 * (double) d.zeroCross / nn * 48000.0 * (double) f) / 1000.0
