@@ -257,6 +257,20 @@ struct VarDelay
 };
 
 // ============================================================================
+//  Lightweight diagnostics - used by the CI self-test to see the real value of
+//  every stage. Accumulation is a handful of adds per sample.
+// ============================================================================
+struct Diagnostics
+{
+    double inSq = 0.0, lowSq = 0.0, midSq = 0.0, highSq = 0.0, outSq = 0.0;
+    double gLowMin = 1.0, gLowMax = 0.0;
+    double gHighMin = 1.0, gHighMax = 0.0;
+    long long n = 0;
+
+    void reset() { *this = Diagnostics {}; }
+};
+
+// ============================================================================
 //  Engine
 // ============================================================================
 template <typename T>
@@ -264,6 +278,9 @@ class Engine
 {
 public:
     Engine() = default;
+
+    Diagnostics diag;
+    void resetDiag() { diag.reset(); }
 
     // ---------------------------------------------------------------- prepare
     void prepare (double sampleRate, int maxBlockSize)
@@ -507,6 +524,17 @@ public:
 
                         if (p.lowEn)   out -= (T (1) - gLow)  * dMid;
                         if (p.highEn)  out -= (T (1) - gHigh) * dHigh;
+
+                        diag.inSq   += (double) dIn   * (double) dIn;
+                        diag.lowSq  += (double) dLow  * (double) dLow;
+                        diag.midSq  += (double) dMid  * (double) dMid;
+                        diag.highSq += (double) dHigh * (double) dHigh;
+                        diag.outSq  += (double) out   * (double) out;
+                        diag.gLowMin  = juce::jmin (diag.gLowMin,  (double) gLow);
+                        diag.gLowMax  = juce::jmax (diag.gLowMax,  (double) gLow);
+                        diag.gHighMin = juce::jmin (diag.gHighMin, (double) gHigh);
+                        diag.gHighMax = juce::jmax (diag.gHighMax, (double) gHigh);
+                        ++diag.n;
                     }
                 }
                 else
